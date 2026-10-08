@@ -141,6 +141,17 @@ export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${LD_LIBRARY_PATH}"
 export QT_PLUGIN_PATH="${APPDIR}/usr/plugins"
 export XDG_DATA_DIRS="${APPDIR}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
+case "${1:-}" in
+    install-layer|--install-layer)
+        shift
+        exec "${APPDIR}/usr/bin/install-layers.sh" "$@"
+        ;;
+    uninstall-layer|--uninstall-layer)
+        shift
+        exec "${APPDIR}/usr/bin/uninstall-layers.sh" "$@"
+        ;;
+esac
+
 # If first arg is a known tool, run it; otherwise launch GUI
 if [ $# -gt 0 ] && [ -x "${APPDIR}/usr/bin/$1" ]; then
     CMD="${APPDIR}/usr/bin/$1"

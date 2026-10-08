@@ -30,7 +30,13 @@ DEST_EXPLICIT="$HOME/.local/share/vulkan/explicit_layer.d"
 mkdir -p "$DEST_LIB" "$DEST_BIN" "$DEST_IMPLICIT" "$DEST_EXPLICIT"
 
 echo "==> Copying libraries to $DEST_LIB..."
-cp -a "$LIB_DIR"/lib* "$DEST_LIB/"
+cp -f "$LIB_DIR"/libVkLayer_gnumon.so "$DEST_LIB/"
+if [ -f "$LIB_DIR"/libgnumon_gl.so ]; then
+    cp -f "$LIB_DIR"/libgnumon_gl.so "$DEST_LIB/"
+fi
+if ls "$LIB_DIR"/libpresentmon.so* 1>/dev/null 2>&1; then
+    cp -a "$LIB_DIR"/libpresentmon.so* "$DEST_LIB/"
+fi
 
 echo "==> Copying executables to $DEST_BIN..."
 cp -f "$BIN_DIR/gnumon-cli" "$DEST_BIN/"

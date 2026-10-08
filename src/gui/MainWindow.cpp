@@ -6,6 +6,9 @@
 #include <QMessageBox>
 #include <QDateTime>
 #include <QDir>
+#include <QStandardPaths>
+#include <QDesktopServices>
+#include <QUrl>
 #include <filesystem>
 #include <vector>
 #include <fstream>
@@ -168,6 +171,10 @@ void MainWindow::SetupUi() {
     btnMiniOverlay_ = new QPushButton("Mini HUD (F12)", this);
     connect(btnMiniOverlay_, &QPushButton::clicked, this, &MainWindow::OnToggleMiniOverlay);
 
+    btnOpenCaptures_ = new QPushButton("Captures", this);
+    btnOpenCaptures_->setToolTip("Open captures folder in file manager");
+    connect(btnOpenCaptures_, &QPushButton::clicked, this, &MainWindow::OnOpenCapturesFolder);
+
     btnRecord_ = new QPushButton("Start Capture (CSV)", this);
     btnRecord_->setStyleSheet("padding: 6px 16px; font-weight: bold; background-color: #2e7d32; color: white; border-radius: 4px;");
     connect(btnRecord_, &QPushButton::clicked, this, &MainWindow::OnToggleRecording);
@@ -180,6 +187,7 @@ void MainWindow::SetupUi() {
     topLayout->addWidget(btnOverlay_);
     topLayout->addWidget(btnMiniOverlay_);
     topLayout->addStretch();
+    topLayout->addWidget(btnOpenCaptures_);
     topLayout->addWidget(btnRecord_);
 
     mainLayout->addWidget(topContainer_);
@@ -584,13 +592,29 @@ void MainWindow::OnPollTimer() {
     }
 }
 
+QString MainWindow::GetCapturesDirectory() const {
+    QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (docs.isEmpty()) {
+        docs = QDir::homePath() + "/Documents";
+    }
+    QString dir = docs + "/gnumon/captures";
+    QDir().mkpath(dir);
+    return dir;
+}
+
+void MainWindow::OnOpenCapturesFolder() {
+    QString dir = GetCapturesDirectory();
+    QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+}
+
 void MainWindow::OnToggleRecording() {
     isRecording_ = !isRecording_;
     if (isRecording_) {
         QString filename = QString("gnumon_capture_%1.csv").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
-        csvFile_.open(filename.toStdString());
+        currentCapturePath_ = GetCapturesDirectory() + "/" + filename;
+        csvFile_.open(currentCapturePath_.toStdString());
         if (!csvFile_.is_open()) {
-            QMessageBox::critical(this, "Capture Error", "Could not create CSV file for capture.");
+            QMessageBox::critical(this, "Capture Error", QString("Could not create CSV file at:\n%1").arg(currentCapturePath_));
             isRecording_ = false;
             return;
         }
@@ -625,7 +649,7 @@ void MainWindow::OnToggleRecording() {
         recordedFramesCount_ = 0;
         btnRecord_->setText("Stop Capture");
         btnRecord_->setStyleSheet("padding: 6px 16px; font-weight: bold; background-color: #c62828; color: white; border-radius: 4px;");
-        lblStatus_->setText(QString("Status: Recording to %1...").arg(filename));
+        lblStatus_->setText(QString("Status: Recording to %1...").arg(currentCapturePath_));
     } else {
         if (csvFile_.is_open()) {
             csvFile_.close();
@@ -637,7 +661,7 @@ void MainWindow::OnToggleRecording() {
 
         btnRecord_->setText("Start Capture (CSV)");
         btnRecord_->setStyleSheet("padding: 6px 16px; font-weight: bold; background-color: #2e7d32; color: white; border-radius: 4px;");
-        lblStatus_->setText(QString("Status: Capture finished (%1 frames saved)").arg(recordedFramesCount_));
+        lblStatus_->setText(QString("Status: Capture finished (%1 frames saved to %2)").arg(recordedFramesCount_).arg(currentCapturePath_));
     }
 
     if (overlay_) {

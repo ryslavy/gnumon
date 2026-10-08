@@ -34,6 +34,7 @@ private slots:
     void OnPollTimer();
     void OnToggleRecording();
     void OnToggleOverlay();
+    void OnOpenCapturesFolder();
     void OnProcessChanged(int index);
     void OnRefreshProcesses();
     void OnConfigureMetrics();
@@ -44,6 +45,7 @@ private:
     void SetupUi();
     void PopulateProcessList();
     void ApplyMetricsConfig();
+    QString GetCapturesDirectory() const;
 
     PM_SESSION_HANDLE session_ = nullptr;
     PM_DYNAMIC_QUERY_HANDLE query_ = nullptr;
@@ -59,6 +61,9 @@ private:
     QPushButton *btnInstallLayer_ = nullptr;
     QPushButton *btnOverlay_ = nullptr;
     QPushButton *btnMiniOverlay_ = nullptr;
+    QPushButton *btnOpenCaptures_ = nullptr;
+    QPushButton *btnRecord_ = nullptr;
+    QString currentCapturePath_;
     QWidget *topContainer_ = nullptr;
     FrametimeGraphWidget *graphWidget_ = nullptr;
     QWidget *graphGroup_ = nullptr;
@@ -80,7 +85,6 @@ private:
     QLabel *lblCpuFreq_ = nullptr;
     QProgressBar *barCpuUtil_ = nullptr;
 
-    QPushButton *btnRecord_ = nullptr;
     QLabel *lblStatus_ = nullptr;
     bool isRecording_ = false;
     bool isMiniOverlay_ = false;

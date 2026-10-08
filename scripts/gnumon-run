@@ -12,6 +12,24 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Clean AppImage environment leaks from LD_LIBRARY_PATH and Qt variables before launching games
+if [ -n "$LD_LIBRARY_PATH" ]; then
+    CLEANED_LD=""
+    IFS=':' read -ra ADDR <<< "$LD_LIBRARY_PATH"
+    for i in "${ADDR[@]}"; do
+        if [ -n "${APPDIR:-}" ] && [[ "$i" == "$APPDIR"* ]]; then
+            continue
+        fi
+        if [[ "$i" == *".mount_"* ]] || [[ "$i" == *"/build-appimage/AppDir"* ]]; then
+            continue
+        fi
+        CLEANED_LD="${CLEANED_LD:+$CLEANED_LD:}$i"
+    done
+    export LD_LIBRARY_PATH="$CLEANED_LD"
+fi
+unset QT_PLUGIN_PATH
+unset QT_QPA_PLATFORM
+
 # Always activate Vulkan implicit layer
 export ENABLE_GNUMON=1
 export VK_INSTANCE_LAYERS="VK_LAYER_GNUMON_capture${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}"
@@ -20,6 +38,11 @@ export VK_INSTANCE_LAYERS="VK_LAYER_GNUMON_capture${VK_INSTANCE_LAYERS:+:$VK_INS
 USER_VULKAN_DIR="$HOME/.local/share/vulkan/implicit_layer.d"
 if [ -d "$USER_VULKAN_DIR" ]; then
     export VK_LAYER_PATH="$USER_VULKAN_DIR${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
+fi
+
+if [ ! -f "$USER_VULKAN_DIR/VkLayer_gnumon.json" ] && [ ! -f "$HOME/.local/share/vulkan/explicit_layer.d/VkLayer_gnumon.json" ]; then
+    echo "[gnumon-run] Note: Vulkan layer is not yet installed in ~/.local/share/vulkan." >&2
+    echo "[gnumon-run] Launch gnumon GUI and click 'Install Layer' or run 'install-layers.sh'." >&2
 fi
 
 # OpenGL LD_PRELOAD handling:
