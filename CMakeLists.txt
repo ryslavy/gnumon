@@ -99,6 +99,7 @@ if(Vulkan_FOUND OR EXISTS "/usr/include/vulkan/vulkan.h")
         src/ipc
         src/common
     )
+    target_link_options(VkLayer_gnumon PRIVATE -static-libstdc++ -static-libgcc)
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/src/layer/VkLayer_gnumon.json.in
         ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_gnumon.json
@@ -114,6 +115,7 @@ target_link_libraries(gnumon_gl PRIVATE
     gnumon_common
     ${CMAKE_DL_LIBS}
 )
+target_link_options(gnumon_gl PRIVATE -static-libstdc++ -static-libgcc)
 target_include_directories(gnumon_gl PRIVATE
     src/ipc
     src/common

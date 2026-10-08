@@ -12,41 +12,33 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Locate libraries (check installation dirs first, then relative build dirs)
-LIB_VK=""
-LIB_GL=""
-LAYER_PATH=""
-
-SEARCH_PATHS=(
-    "$HOME/.local/lib/gnumon"
-    "/usr/local/lib"
-    "/usr/lib"
-    "$SCRIPT_DIR"
-    "$SCRIPT_DIR/../build-host"
-    "$SCRIPT_DIR/build-host"
-)
-
-for p in "${SEARCH_PATHS[@]}"; do
-    if [ -f "$p/libVkLayer_gnumon.so" ] && [ -z "$LIB_VK" ]; then
-        LIB_VK="$p/libVkLayer_gnumon.so"
-        LAYER_PATH="$p"
-    fi
-    if [ -f "$p/libgnumon_gl.so" ] && [ -z "$LIB_GL" ]; then
-        LIB_GL="$p/libgnumon_gl.so"
-    fi
-done
-
-# Export Vulkan activation
+# Always activate Vulkan implicit layer
 export ENABLE_GNUMON=1
 export VK_INSTANCE_LAYERS="VK_LAYER_GNUMON_capture${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}"
 
-if [ -n "$LAYER_PATH" ]; then
-    export VK_LAYER_PATH="$LAYER_PATH${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
+# Ensure user Vulkan layer directory is searched
+USER_VULKAN_DIR="$HOME/.local/share/vulkan/implicit_layer.d"
+if [ -d "$USER_VULKAN_DIR" ]; then
+    export VK_LAYER_PATH="$USER_VULKAN_DIR${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
 fi
 
-# Export OpenGL LD_PRELOAD
-if [ -n "$LIB_GL" ]; then
-    export LD_PRELOAD="$LIB_GL${LD_PRELOAD:+:$LD_PRELOAD}"
+# OpenGL LD_PRELOAD handling:
+# Only activate for native OpenGL if explicitly requested via GNUMON_GL=1 or --gl
+# to avoid breaking Steam 32-bit wrappers or Proton container processes.
+if [ "${GNUMON_GL:-0}" = "1" ] || [ "$1" = "--gl" ]; then
+    if [ "$1" = "--gl" ]; then
+        shift
+    fi
+    LIB_GL=""
+    for p in "$HOME/.local/lib/gnumon" "/usr/local/lib" "/usr/lib" "$SCRIPT_DIR" "$SCRIPT_DIR/../build-host"; do
+        if [ -f "$p/libgnumon_gl.so" ]; then
+            LIB_GL="$p/libgnumon_gl.so"
+            break
+        fi
+    done
+    if [ -n "$LIB_GL" ]; then
+        export LD_PRELOAD="$LIB_GL${LD_PRELOAD:+:$LD_PRELOAD}"
+    fi
 fi
 
 exec "$@"

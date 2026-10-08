@@ -8,15 +8,15 @@ SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -f "$SOURCE_DIR/lib/libVkLayer_gnumon.so" ]; then
     LIB_DIR="$SOURCE_DIR/lib"
     BIN_DIR="$SOURCE_DIR/bin"
+elif [ -f "$SOURCE_DIR/build-container/libVkLayer_gnumon.so" ]; then
+    LIB_DIR="$SOURCE_DIR/build-container"
+    BIN_DIR="$SOURCE_DIR/build-host"
 elif [ -f "$SOURCE_DIR/build-host/libVkLayer_gnumon.so" ]; then
     LIB_DIR="$SOURCE_DIR/build-host"
     BIN_DIR="$SOURCE_DIR/build-host"
 elif [ -f "$SOURCE_DIR/build/libVkLayer_gnumon.so" ]; then
     LIB_DIR="$SOURCE_DIR/build"
     BIN_DIR="$SOURCE_DIR/build"
-elif [ -f "$SOURCE_DIR/build-container/libVkLayer_gnumon.so" ]; then
-    LIB_DIR="$SOURCE_DIR/build-container"
-    BIN_DIR="$SOURCE_DIR/build-container"
 else
     echo "Error: libVkLayer_gnumon.so not found. Please compile first or run from extracted release package."
     exit 1
