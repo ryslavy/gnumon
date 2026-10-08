@@ -5,9 +5,15 @@ set -e
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [ -f "$SOURCE_DIR/lib/libVkLayer_gnumon.so" ]; then
+if [ -n "${APPDIR:-}" ] && [ -f "$APPDIR/usr/lib/libVkLayer_gnumon.so" ]; then
+    LIB_DIR="$APPDIR/usr/lib"
+    BIN_DIR="$APPDIR/usr/bin"
+elif [ -f "$SOURCE_DIR/lib/libVkLayer_gnumon.so" ]; then
     LIB_DIR="$SOURCE_DIR/lib"
     BIN_DIR="$SOURCE_DIR/bin"
+elif [ -f "$SOURCE_DIR/usr/lib/libVkLayer_gnumon.so" ]; then
+    LIB_DIR="$SOURCE_DIR/usr/lib"
+    BIN_DIR="$SOURCE_DIR/usr/bin"
 elif [ -f "$SOURCE_DIR/build-container/libVkLayer_gnumon.so" ]; then
     LIB_DIR="$SOURCE_DIR/build-container"
     BIN_DIR="$SOURCE_DIR/build-host"

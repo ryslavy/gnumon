@@ -8,6 +8,7 @@
 #include <mutex>
 #include <cstring>
 #include <iostream>
+#include <fstream>
 #include <deque>
 #include <algorithm>
 
@@ -70,9 +71,63 @@ std::atomic<uint32_t> g_frameId{0};
 std::atomic<uint64_t> g_lastPresentStartNs{0};
 std::atomic<uint64_t> g_currentGpuSubmitStartNs{0};
 std::atomic<uint64_t> g_lastGpuSubmitEndNs{0};
+static int GetConfiguredHudCorner() {
+    const char* envCorner = getenv("GNUMON_CORNER");
+    if (envCorner) {
+        std::string s(envCorner);
+        if (s == "1" || s == "TR" || s == "top-right") return 1;
+        if (s == "2" || s == "BL" || s == "bottom-left") return 2;
+        if (s == "3" || s == "BR" || s == "bottom-right") return 3;
+        return 0;
+    }
+    const char* home = getenv("HOME");
+    if (home) {
+        std::string cfgPath = std::string(home) + "/.config/gnumon/config.ini";
+        std::ifstream file(cfgPath);
+        if (file.is_open()) {
+            std::string line;
+            while (std::getline(file, line)) {
+                if (line.rfind("inGameHudCorner", 0) == 0) {
+                    auto pos = line.find('=');
+                    if (pos != std::string::npos) {
+                        try { return std::stoi(line.substr(pos + 1)); } catch (...) {}
+                    }
+                }
+            }
+        }
+    }
+    return 0; // Top-Left default
+}
+
+static bool GetConfiguredHudDefault() {
+    const char* envOverlay = getenv("GNUMON_OVERLAY");
+    if (envOverlay) {
+        return (std::string(envOverlay) != "0");
+    }
+    const char* home = getenv("HOME");
+    if (home) {
+        std::string cfgPath = std::string(home) + "/.config/gnumon/config.ini";
+        std::ifstream file(cfgPath);
+        if (file.is_open()) {
+            std::string line;
+            while (std::getline(file, line)) {
+                if (line.rfind("inGameHudEnabled", 0) == 0) {
+                    auto pos = line.find('=');
+                    if (pos != std::string::npos) {
+                        std::string val = line.substr(pos + 1);
+                        return (val == "true" || val == "1");
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+static bool g_enableOverlay = GetConfiguredHudDefault();
+static int g_hudCorner = GetConfiguredHudCorner();
 thread_local uint64_t g_currentCpuStartNs = 0;
 thread_local bool g_hasAcquiredImage = false;
-static bool g_enableOverlay = (getenv("GNUMON_OVERLAY") != nullptr && std::string(getenv("GNUMON_OVERLAY")) != "0");
 
 void* GetDispatchKey(const void* object) {
     return const_cast<void*>(object);
@@ -424,12 +479,16 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
         VkDevice dev = VK_NULL_HANDLE;
         VkFormat fmt = VK_FORMAT_B8G8R8A8_UNORM;
         VkImage img = VK_NULL_HANDLE;
+        uint32_t scWidth = 1920;
+        uint32_t scHeight = 1080;
         {
             std::lock_guard<std::mutex> slock(g_swapchainMutex);
             auto it = g_swapchains.find(sc);
             if (it != g_swapchains.end()) {
                 dev = it->second.device;
                 fmt = it->second.format;
+                if (it->second.extent.width > 0) scWidth = it->second.extent.width;
+                if (it->second.extent.height > 0) scHeight = it->second.extent.height;
                 if (imgIdx < it->second.images.size()) {
                     img = it->second.images[imgIdx];
                 }
@@ -481,7 +540,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
 
                 g_overlayRenderer.RenderHud(queue, img, fmt,
                                             presentFps, dispFps, lowFps,
-                                            ftMs, latMs, animErrMs, isRec);
+                                            ftMs, latMs, animErrMs, isRec,
+                                            g_hudCorner, scWidth, scHeight);
             }
         }
     }

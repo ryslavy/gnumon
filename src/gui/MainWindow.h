@@ -10,6 +10,8 @@
 #include "../../include/gnumon/PresentMonAPI.h"
 #include "FrametimeGraphWidget.h"
 #include "MetricsConfigDialog.h"
+#include "SettingsDialog.h"
+#include "AppConfig.h"
 #include "PresentMonOverlay.h"
 
 #include <QKeyEvent>
@@ -34,10 +36,12 @@ private slots:
     void OnPollTimer();
     void OnToggleRecording();
     void OnToggleOverlay();
+    void OnToggleInGameOverlay();
     void OnOpenCapturesFolder();
     void OnProcessChanged(int index);
     void OnRefreshProcesses();
     void OnConfigureMetrics();
+    void OnConfigureSettings();
     void OnToggleLayerInstall();
     void OnToggleMiniOverlay();
 
@@ -45,6 +49,7 @@ private:
     void SetupUi();
     void PopulateProcessList();
     void ApplyMetricsConfig();
+    void ApplyConfig();
     QString GetCapturesDirectory() const;
 
     PM_SESSION_HANDLE session_ = nullptr;
@@ -58,7 +63,9 @@ private:
     QComboBox *comboProcess_ = nullptr;
     QPushButton *btnRefreshProcess_ = nullptr;
     QPushButton *btnConfigMetrics_ = nullptr;
+    QPushButton *btnSettings_ = nullptr;
     QPushButton *btnInstallLayer_ = nullptr;
+    QPushButton *btnInGameOverlay_ = nullptr;
     QPushButton *btnOverlay_ = nullptr;
     QPushButton *btnMiniOverlay_ = nullptr;
     QPushButton *btnOpenCaptures_ = nullptr;
@@ -88,11 +95,13 @@ private:
     QLabel *lblStatus_ = nullptr;
     bool isRecording_ = false;
     bool isMiniOverlay_ = false;
+    bool inGameOverlayActive_ = false;
     QPoint dragPosition_;
     uint32_t trackedPid_ = 0;
     std::ofstream csvFile_;
     uint64_t recordedFramesCount_ = 0;
     MetricsConfig metricsConfig_{};
+    AppConfig config_{};
 };
 
 } // namespace gnumon::gui

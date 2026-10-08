@@ -271,4 +271,14 @@ bool TelemetryCoordinator::ConsumeRecordHotkeyToggle() {
     return inputTracker_.ConsumeRecordHotkeyToggle();
 }
 
+void TelemetryCoordinator::SetInGameOverlayEnabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(dataMutex_);
+    frameConsumer_.SetOverlayEnabled(enabled);
+}
+
+bool TelemetryCoordinator::IsInGameOverlayEnabled() const {
+    std::lock_guard<std::mutex> lock(dataMutex_);
+    return frameConsumer_.IsOverlayEnabled();
+}
+
 } // namespace gnumon::service

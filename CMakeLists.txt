@@ -151,6 +151,8 @@ if(Qt6_FOUND)
         src/gui/FrametimeGraphWidget.h
         src/gui/MetricsConfigDialog.cpp
         src/gui/MetricsConfigDialog.h
+        src/gui/SettingsDialog.cpp
+        src/gui/SettingsDialog.h
         src/gui/PresentMonOverlay.cpp
         src/gui/PresentMonOverlay.h
     )

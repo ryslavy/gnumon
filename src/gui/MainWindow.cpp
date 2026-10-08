@@ -57,6 +57,7 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle("gnumon — PresentMon Linux");
     resize(820, 680);
 
+    config_.Load();
     SetupUi();
 
     // Initialize PresentMon session
@@ -79,7 +80,7 @@ MainWindow::MainWindow(QWidget *parent)
             { PM_METRIC_GPU_TIME, PM_STAT_NONE, 0, 0, offsetof(QueryPayload, gpuTimeMs), sizeof(double) },
         };
 
-        pmRegisterDynamicQuery(session_, &query_, elements.data(), elements.size(), 1000.0, 0.0);
+        pmRegisterDynamicQuery(session_, &query_, elements.data(), elements.size(), static_cast<double>(config_.averagingWindowMs), 0.0);
 
         // Read static device names
         char gpuNameBuf[128]{};
@@ -104,8 +105,11 @@ MainWindow::MainWindow(QWidget *parent)
         if (trackedPid_ > 0) {
             overlay_->SetTargetProcess(trackedPid_, comboProcess_->currentText().toStdString());
         }
+        overlay_->SetConfig(config_);
         overlay_->show();
     }
+
+    ApplyConfig();
 
     pollTimer_ = new QTimer(this);
     connect(pollTimer_, &QTimer::timeout, this, &MainWindow::OnPollTimer);
@@ -151,8 +155,9 @@ void MainWindow::SetupUi() {
     btnRefreshProcess_ = new QPushButton("Refresh", this);
     connect(btnRefreshProcess_, &QPushButton::clicked, this, &MainWindow::OnRefreshProcesses);
 
-    btnConfigMetrics_ = new QPushButton("Metrics...", this);
-    connect(btnConfigMetrics_, &QPushButton::clicked, this, &MainWindow::OnConfigureMetrics);
+    btnSettings_ = new QPushButton("Settings...", this);
+    btnSettings_->setStyleSheet("padding: 4px 10px; font-weight: bold; background-color: #263238; border: 1px solid #455a64; border-radius: 4px;");
+    connect(btnSettings_, &QPushButton::clicked, this, &MainWindow::OnConfigureSettings);
 
     const char* homeDir = std::getenv("HOME");
     bool layerInstalled = false;
@@ -162,9 +167,13 @@ void MainWindow::SetupUi() {
     }
     btnInstallLayer_ = new QPushButton(layerInstalled ? "Uninstall Layer" : "Install Layer", this);
     if (layerInstalled) {
-        btnInstallLayer_->setStyleSheet("background-color: #37474f; color: #ffb74d;");
+        btnInstallLayer_->setStyleSheet("background-color: #37474f; color: #ffb74d; font-weight: bold;");
     }
     connect(btnInstallLayer_, &QPushButton::clicked, this, &MainWindow::OnToggleLayerInstall);
+
+    btnInGameOverlay_ = new QPushButton("In-Game HUD (F9)", this);
+    btnInGameOverlay_->setToolTip("Toggle real-time swapchain HUD directly inside the game window");
+    connect(btnInGameOverlay_, &QPushButton::clicked, this, &MainWindow::OnToggleInGameOverlay);
 
     btnOverlay_ = new QPushButton("Overlay (F11)", this);
     connect(btnOverlay_, &QPushButton::clicked, this, &MainWindow::OnToggleOverlay);
@@ -183,8 +192,9 @@ void MainWindow::SetupUi() {
     topLayout->addWidget(lblProc);
     topLayout->addWidget(comboProcess_);
     topLayout->addWidget(btnRefreshProcess_);
-    topLayout->addWidget(btnConfigMetrics_);
+    topLayout->addWidget(btnSettings_);
     topLayout->addWidget(btnInstallLayer_);
+    topLayout->addWidget(btnInGameOverlay_);
     topLayout->addWidget(btnOverlay_);
     topLayout->addWidget(btnMiniOverlay_);
     topLayout->addStretch();
@@ -263,36 +273,62 @@ void MainWindow::SetupUi() {
     ApplyMetricsConfig();
 }
 
-void MainWindow::OnConfigureMetrics() {
-    MetricsConfigDialog dlg(metricsConfig_, this);
+void MainWindow::OnConfigureSettings() {
+    SettingsDialog dlg(config_, this);
     if (dlg.exec() == QDialog::Accepted) {
-        metricsConfig_ = dlg.GetConfig();
-        ApplyMetricsConfig();
+        config_ = dlg.GetConfig();
+        config_.Save();
+        ApplyConfig();
+    }
+}
+
+void MainWindow::OnConfigureMetrics() {
+    OnConfigureSettings();
+}
+
+void MainWindow::ApplyConfig() {
+    ApplyMetricsConfig();
+
+    // 1. In-game HUD
+    inGameOverlayActive_ = config_.inGameHudEnabled;
+    if (session_) {
+        pmSetInGameOverlayState(session_, inGameOverlayActive_);
+    }
+    if (btnInGameOverlay_) {
+        btnInGameOverlay_->setText(inGameOverlayActive_ ? "In-Game HUD: ON (F9)" : "In-Game HUD: OFF (F9)");
+        btnInGameOverlay_->setStyleSheet(inGameOverlayActive_
+            ? "background-color: #00838f; color: white; font-weight: bold;"
+            : "");
+    }
+
+    // 2. Desktop Overlay
+    if (overlay_) {
+        overlay_->SetConfig(config_);
     }
 }
 
 void MainWindow::ApplyMetricsConfig() {
-    if (graphGroup_) graphGroup_->setVisible(metricsConfig_.showGraph);
+    if (graphGroup_) graphGroup_->setVisible(config_.showGraph);
 
-    if (lblGpuPower_) lblGpuPower_->setVisible(metricsConfig_.showGpuPower);
-    if (lblGpuTemp_) lblGpuTemp_->setVisible(metricsConfig_.showGpuTemp);
-    if (lblGpuFreq_) lblGpuFreq_->setVisible(metricsConfig_.showGpuFreq);
-    if (lblGpuUtil_) lblGpuUtil_->setVisible(metricsConfig_.showGpuUtil);
-    if (barGpuUtil_) barGpuUtil_->setVisible(metricsConfig_.showGpuUtil);
-    if (lblGpuVram_) lblGpuVram_->setVisible(metricsConfig_.showGpuVram);
+    if (lblGpuPower_) lblGpuPower_->setVisible(config_.showGpuPower);
+    if (lblGpuTemp_) lblGpuTemp_->setVisible(config_.showGpuTemp);
+    if (lblGpuFreq_) lblGpuFreq_->setVisible(config_.showGpuFreq);
+    if (lblGpuUtil_) lblGpuUtil_->setVisible(config_.showGpuUtil);
+    if (barGpuUtil_) barGpuUtil_->setVisible(config_.showGpuUtil);
+    if (lblGpuVram_) lblGpuVram_->setVisible(config_.showGpuVram);
 
-    if (lblCpuPower_) lblCpuPower_->setVisible(metricsConfig_.showCpuPower);
-    if (lblCpuTemp_) lblCpuTemp_->setVisible(metricsConfig_.showCpuTemp);
-    if (lblCpuFreq_) lblCpuFreq_->setVisible(metricsConfig_.showCpuFreq);
-    if (lblCpuUtil_) lblCpuUtil_->setVisible(metricsConfig_.showCpuUtil);
-    if (barCpuUtil_) barCpuUtil_->setVisible(metricsConfig_.showCpuUtil);
+    if (lblCpuPower_) lblCpuPower_->setVisible(config_.showCpuPower);
+    if (lblCpuTemp_) lblCpuTemp_->setVisible(config_.showCpuTemp);
+    if (lblCpuFreq_) lblCpuFreq_->setVisible(config_.showCpuFreq);
+    if (lblCpuUtil_) lblCpuUtil_->setVisible(config_.showCpuUtil);
+    if (barCpuUtil_) barCpuUtil_->setVisible(config_.showCpuUtil);
 
-    bool anyGpu = metricsConfig_.showGpuPower || metricsConfig_.showGpuTemp ||
-                  metricsConfig_.showGpuFreq || metricsConfig_.showGpuUtil || metricsConfig_.showGpuVram;
+    bool anyGpu = config_.showGpuPower || config_.showGpuTemp ||
+                  config_.showGpuFreq || config_.showGpuUtil || config_.showGpuVram;
     if (gpuGroup_) gpuGroup_->setVisible(anyGpu);
 
-    bool anyCpu = metricsConfig_.showCpuPower || metricsConfig_.showCpuTemp ||
-                  metricsConfig_.showCpuFreq || metricsConfig_.showCpuUtil;
+    bool anyCpu = config_.showCpuPower || config_.showCpuTemp ||
+                  config_.showCpuFreq || config_.showCpuUtil;
     if (cpuGroup_) cpuGroup_->setVisible(anyCpu);
 }
 
@@ -316,9 +352,14 @@ void MainWindow::OnToggleLayerInstall() {
         std::error_code ec;
         std::filesystem::remove(impFile, ec);
         std::filesystem::remove(expFile, ec);
+        std::filesystem::remove_all(destLibDir, ec);
+        std::filesystem::remove(destBinDir / "gnumon-run", ec);
+
         btnInstallLayer_->setText("Install Layer");
         btnInstallLayer_->setStyleSheet("");
-        lblStatus_->setText("Status: Vulkan Layer uninstalled from ~/.local/share/vulkan");
+        lblStatus_->setText("Status: Vulkan Layer and tools uninstalled from ~/.local.");
+        QMessageBox::information(this, "Layer Uninstalled",
+            "gnumon Vulkan Layer and gnumon-run wrapper have been removed from your user profile (~/.local).");
         return;
     }
 
@@ -349,6 +390,12 @@ void MainWindow::OnToggleLayerInstall() {
             srcVkLib = cand;
             break;
         }
+    }
+
+    if (srcVkLib.empty() && !std::filesystem::exists(installedVkLib)) {
+        QMessageBox::critical(this, "Installation Error",
+            "Could not locate libVkLayer_gnumon.so to install.\nPlease ensure the package files are intact.");
+        return;
     }
 
     if (!srcVkLib.empty()) {
@@ -433,8 +480,17 @@ void MainWindow::OnToggleLayerInstall() {
     }
 
     btnInstallLayer_->setText("Uninstall Layer");
-    btnInstallLayer_->setStyleSheet("background-color: #37474f; color: #ffb74d;");
+    btnInstallLayer_->setStyleSheet("background-color: #37474f; color: #ffb74d; font-weight: bold;");
     lblStatus_->setText("Status: Vulkan Layer installed to ~/.local/share/vulkan and gnumon-run ready!");
+    QMessageBox::information(this, "Layer Installed Successfully",
+        "The gnumon Vulkan Layer has been installed into your user profile:\n"
+        "• Manifest: ~/.local/share/vulkan/implicit_layer.d/VkLayer_gnumon.json\n"
+        "• Library:  ~/.local/lib/gnumon/libVkLayer_gnumon.so\n"
+        "• Wrapper:  ~/.local/bin/gnumon-run\n\n"
+        "Launch games on Steam using:\n"
+        "   gnumon-run %command%\n"
+        "Or with In-Game HUD enabled:\n"
+        "   gnumon-run --overlay %command%");
 }
 
 void MainWindow::PopulateProcessList() {
@@ -594,6 +650,10 @@ void MainWindow::OnPollTimer() {
 }
 
 QString MainWindow::GetCapturesDirectory() const {
+    if (!config_.captureDirectory.isEmpty()) {
+        QDir().mkpath(config_.captureDirectory);
+        return config_.captureDirectory;
+    }
     QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     if (docs.isEmpty()) {
         docs = QDir::homePath() + "/Documents";
@@ -693,6 +753,9 @@ void MainWindow::OnToggleRecording() {
         btnRecord_->setText("Start Capture (CSV)");
         btnRecord_->setStyleSheet("padding: 6px 16px; font-weight: bold; background-color: #2e7d32; color: white; border-radius: 4px;");
         lblStatus_->setText(QString("Status: Capture finished (%1 frames saved to %2)").arg(recordedFramesCount_).arg(currentCapturePath_));
+        if (config_.autoOpenCaptures) {
+            OnOpenCapturesFolder();
+        }
     }
 
     if (overlay_) {
@@ -704,6 +767,24 @@ void MainWindow::OnToggleOverlay() {
     if (overlay_) {
         overlay_->ToggleVisibility();
     }
+}
+
+void MainWindow::OnToggleInGameOverlay() {
+    inGameOverlayActive_ = !inGameOverlayActive_;
+    config_.inGameHudEnabled = inGameOverlayActive_;
+    config_.Save();
+    if (session_) {
+        pmSetInGameOverlayState(session_, inGameOverlayActive_);
+    }
+    if (btnInGameOverlay_) {
+        btnInGameOverlay_->setText(inGameOverlayActive_ ? "In-Game HUD: ON (F9)" : "In-Game HUD: OFF (F9)");
+        btnInGameOverlay_->setStyleSheet(inGameOverlayActive_
+            ? "background-color: #00838f; color: white; font-weight: bold;"
+            : "");
+    }
+    lblStatus_->setText(inGameOverlayActive_
+        ? "Status: In-Game Swapchain HUD ENABLED (rendering inside Vulkan games)"
+        : "Status: In-Game Swapchain HUD disabled");
 }
 
 void MainWindow::OnToggleMiniOverlay() {
@@ -733,6 +814,11 @@ void MainWindow::keyPressEvent(QKeyEvent *event) {
     }
     if (event->key() == Qt::Key_F10) {
         OnToggleRecording();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_F9) {
+        OnToggleInGameOverlay();
         event->accept();
         return;
     }

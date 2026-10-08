@@ -446,6 +446,8 @@ extern "C" {
 	PRESENTMON_API2_EXPORT PM_STATUS pmCheckHotkeyTriggered(PM_SESSION_HANDLE handle, bool* pTriggered);
 	PRESENTMON_API2_EXPORT PM_STATUS pmCheckOverlayHotkeyTriggered(PM_SESSION_HANDLE handle, bool* pTriggered);
 	PRESENTMON_API2_EXPORT PM_STATUS pmCheckRecordHotkeyTriggered(PM_SESSION_HANDLE handle, bool* pTriggered);
+	PRESENTMON_API2_EXPORT PM_STATUS pmSetInGameOverlayState(PM_SESSION_HANDLE handle, bool enabled);
+	PRESENTMON_API2_EXPORT PM_STATUS pmGetInGameOverlayState(PM_SESSION_HANDLE handle, bool* pEnabled);
 
 #ifdef __cplusplus
 }

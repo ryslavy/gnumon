@@ -734,4 +734,22 @@ PRESENTMON_API2_EXPORT PM_STATUS pmCheckRecordHotkeyTriggered(PM_SESSION_HANDLE 
     return PM_STATUS_SUCCESS;
 }
 
+PRESENTMON_API2_EXPORT PM_STATUS pmSetInGameOverlayState(PM_SESSION_HANDLE handle, bool enabled) {
+    if (!handle) return PM_STATUS_BAD_HANDLE;
+    if (handle->coordinator) {
+        handle->coordinator->SetInGameOverlayEnabled(enabled);
+        return PM_STATUS_SUCCESS;
+    }
+    return PM_STATUS_SERVICE_ERROR;
+}
+
+PRESENTMON_API2_EXPORT PM_STATUS pmGetInGameOverlayState(PM_SESSION_HANDLE handle, bool* pEnabled) {
+    if (!handle || !pEnabled) return PM_STATUS_BAD_HANDLE;
+    if (handle->coordinator) {
+        *pEnabled = handle->coordinator->IsInGameOverlayEnabled();
+        return PM_STATUS_SUCCESS;
+    }
+    return PM_STATUS_SERVICE_ERROR;
+}
+
 } // extern "C"

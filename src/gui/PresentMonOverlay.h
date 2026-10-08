@@ -13,6 +13,7 @@
 #include <string>
 #include <chrono>
 #include "../../include/gnumon/PresentMonAPI.h"
+#include "AppConfig.h"
 
 namespace gnumon::gui {
 
@@ -27,6 +28,7 @@ public:
     void SetRecordingState(bool isRecording, const std::string& csvPath = "");
     void ToggleVisibility();
     void SetCorner(int corner); // 0: Top-Left, 1: Top-Right, 2: Bottom-Left, 3: Bottom-Right
+    void SetConfig(const AppConfig& config);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -84,6 +86,7 @@ private:
     // UI state
     int corner_ = 0; // Top-Left
     QPoint dragPosition_;
+    AppConfig config_{};
 };
 
 } // namespace gnumon::gui

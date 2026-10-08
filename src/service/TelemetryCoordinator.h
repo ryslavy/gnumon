@@ -34,6 +34,9 @@ public:
     bool ConsumeOverlayHotkeyToggle();
     bool ConsumeRecordHotkeyToggle();
 
+    void SetInGameOverlayEnabled(bool enabled);
+    bool IsInGameOverlayEnabled() const;
+
 private:
     std::unique_ptr<control::IGpuTelemetryProvider> gpuProvider_;
     control::CpuTelemetry cpuTelemetry_;

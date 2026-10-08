@@ -157,7 +157,7 @@ public:
     void RenderHud(VkQueue queue, VkImage image, VkFormat format,
                    double presentFps, double displayedFps, double fps1PercentLow,
                    double frameTimeMs, double latencyMs, double animErrorMs,
-                   bool isRecording)
+                   bool isRecording, int corner = 0, uint32_t swapchainWidth = 1920, uint32_t swapchainHeight = 1080)
     {
         if (!initialized_ || !mappedPixels_ || !image || !queue) return;
 
@@ -291,8 +291,17 @@ public:
         region.bufferOffset = 0;
         region.bufferRowLength = HUD_WIDTH;
         region.bufferImageHeight = HUD_HEIGHT;
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageOffset = {24, 24, 0};
+        int32_t ox = 24;
+        int32_t oy = 24;
+        if (corner == 1) { // Top-Right
+            if (swapchainWidth > HUD_WIDTH + 48) ox = static_cast<int32_t>(swapchainWidth - HUD_WIDTH - 24);
+        } else if (corner == 2) { // Bottom-Left
+            if (swapchainHeight > HUD_HEIGHT + 48) oy = static_cast<int32_t>(swapchainHeight - HUD_HEIGHT - 24);
+        } else if (corner == 3) { // Bottom-Right
+            if (swapchainWidth > HUD_WIDTH + 48) ox = static_cast<int32_t>(swapchainWidth - HUD_WIDTH - 24);
+            if (swapchainHeight > HUD_HEIGHT + 48) oy = static_cast<int32_t>(swapchainHeight - HUD_HEIGHT - 24);
+        }
+        region.imageOffset = {ox, oy, 0};
         region.imageExtent = {HUD_WIDTH, HUD_HEIGHT, 1};
 
         cmdCopyBufferToImage_(commandBuffer_, stagingBuffer_, image,
