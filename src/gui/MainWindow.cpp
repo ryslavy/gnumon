@@ -153,9 +153,13 @@ void MainWindow::SetupUi() {
     const char* homeDir = std::getenv("HOME");
     bool layerInstalled = false;
     if (homeDir) {
-        layerInstalled = std::filesystem::exists(std::filesystem::path(homeDir) / ".local/share/vulkan/implicit_layer.d/VkLayer_gnumon.json");
+        layerInstalled = std::filesystem::exists(std::filesystem::path(homeDir) / ".local/share/vulkan/implicit_layer.d/VkLayer_gnumon.json") &&
+                         std::filesystem::exists(std::filesystem::path(homeDir) / ".local/lib/gnumon/libVkLayer_gnumon.so");
     }
     btnInstallLayer_ = new QPushButton(layerInstalled ? "Uninstall Layer" : "Install Layer", this);
+    if (layerInstalled) {
+        btnInstallLayer_->setStyleSheet("background-color: #37474f; color: #ffb74d;");
+    }
     connect(btnInstallLayer_, &QPushButton::clicked, this, &MainWindow::OnToggleLayerInstall);
 
     btnOverlay_ = new QPushButton("Overlay (F11)", this);
@@ -287,46 +291,141 @@ void MainWindow::OnToggleLayerInstall() {
     const char* home = std::getenv("HOME");
     if (!home) return;
     std::filesystem::path homePath(home);
-    std::filesystem::path impFile = homePath / ".local/share/vulkan/implicit_layer.d/VkLayer_gnumon.json";
-    std::filesystem::path expFile = homePath / ".local/share/vulkan/explicit_layer.d/VkLayer_gnumon.json";
+    std::filesystem::path destLibDir = homePath / ".local/lib/gnumon";
+    std::filesystem::path destBinDir = homePath / ".local/bin";
+    std::filesystem::path destImpDir = homePath / ".local/share/vulkan/implicit_layer.d";
+    std::filesystem::path destExpDir = homePath / ".local/share/vulkan/explicit_layer.d";
 
-    if (std::filesystem::exists(impFile)) {
-        auto res = QMessageBox::question(this, "Uninstall Vulkan Layer",
-            "gnumon Vulkan layer is currently installed in your user profile.\n\nDo you want to uninstall it?",
-            QMessageBox::Yes | QMessageBox::No);
-        if (res == QMessageBox::Yes) {
-            std::filesystem::remove(impFile);
-            std::filesystem::remove(expFile);
-            btnInstallLayer_->setText("Install Layer");
-            lblStatus_->setText("Status: Vulkan Layer uninstalled from user profile");
-        }
-    } else {
-        std::filesystem::create_directories(impFile.parent_path());
-        std::filesystem::create_directories(expFile.parent_path());
+    std::filesystem::path impFile = destImpDir / "VkLayer_gnumon.json";
+    std::filesystem::path expFile = destExpDir / "VkLayer_gnumon.json";
+    std::filesystem::path installedVkLib = destLibDir / "libVkLayer_gnumon.so";
 
-        std::filesystem::path exeDir = std::filesystem::canonical("/proc/self/exe").parent_path();
-        std::filesystem::path layerLib = exeDir / "libVkLayer_gnumon.so";
-        if (!std::filesystem::exists(layerLib)) {
-            layerLib = homePath / ".local/lib/gnumon/libVkLayer_gnumon.so";
-        }
-        if (!std::filesystem::exists(layerLib)) {
-            layerLib = "/usr/local/lib/libVkLayer_gnumon.so";
-        }
-        if (!std::filesystem::exists(layerLib)) {
-            layerLib = "/usr/lib/libVkLayer_gnumon.so";
-        }
+    bool isInstalled = std::filesystem::exists(impFile) && std::filesystem::exists(installedVkLib);
 
-        std::ofstream imp(impFile);
-        imp << "{\n    \"file_format_version\" : \"1.0.0\",\n    \"layer\" : {\n        \"name\": \"VK_LAYER_GNUMON_capture\",\n        \"type\": \"GLOBAL\",\n        \"library_path\": \"" << layerLib.string() << "\",\n        \"api_version\": \"1.3.0\",\n        \"implementation_version\": \"1\",\n        \"description\": \"gnumon Linux PresentMon frame capture layer\",\n        \"functions\": {\n            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n        },\n        \"enable_environment\": {\n            \"ENABLE_GNUMON\": \"1\"\n        },\n        \"disable_environment\": {\n            \"DISABLE_GNUMON\": \"1\"\n        }\n    }\n}\n";
-
-        std::ofstream exp(expFile);
-        exp << "{\n    \"file_format_version\" : \"1.0.0\",\n    \"layer\" : {\n        \"name\": \"VK_LAYER_GNUMON_capture\",\n        \"type\": \"GLOBAL\",\n        \"library_path\": \"" << layerLib.string() << "\",\n        \"api_version\": \"1.3.0\",\n        \"implementation_version\": \"1\",\n        \"description\": \"gnumon Linux PresentMon frame capture layer\",\n        \"functions\": {\n            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n        }\n    }\n}\n";
-
-        btnInstallLayer_->setText("Uninstall Layer");
-        QMessageBox::information(this, "Layer Installed",
-            "gnumon Vulkan layer was installed successfully!\n\nTo benchmark any game in Steam or terminal, set:\nENABLE_GNUMON=1 %command%");
-        lblStatus_->setText("Status: Vulkan Layer registered in ~/.local/share/vulkan");
+    if (isInstalled) {
+        // Uninstall
+        std::error_code ec;
+        std::filesystem::remove(impFile, ec);
+        std::filesystem::remove(expFile, ec);
+        btnInstallLayer_->setText("Install Layer");
+        btnInstallLayer_->setStyleSheet("");
+        lblStatus_->setText("Status: Vulkan Layer uninstalled from ~/.local/share/vulkan");
+        return;
     }
+
+    // Install
+    std::error_code ec;
+    std::filesystem::create_directories(destLibDir, ec);
+    std::filesystem::create_directories(destBinDir, ec);
+    std::filesystem::create_directories(destImpDir, ec);
+    std::filesystem::create_directories(destExpDir, ec);
+
+    std::filesystem::path exeDir = std::filesystem::canonical("/proc/self/exe", ec).parent_path();
+
+    // 1. Locate and copy libVkLayer_gnumon.so
+    std::vector<std::filesystem::path> vkCandidates = {
+        exeDir / "libVkLayer_gnumon.so",
+        exeDir / "../lib/libVkLayer_gnumon.so",
+        exeDir / "../lib64/libVkLayer_gnumon.so",
+        exeDir / "build-container/libVkLayer_gnumon.so",
+        exeDir / "../build-container/libVkLayer_gnumon.so",
+        exeDir / "build-host/libVkLayer_gnumon.so",
+        exeDir / "../build-host/libVkLayer_gnumon.so",
+        installedVkLib
+    };
+
+    std::filesystem::path srcVkLib;
+    for (const auto& cand : vkCandidates) {
+        if (std::filesystem::exists(cand) && !std::filesystem::equivalent(cand, installedVkLib, ec)) {
+            srcVkLib = cand;
+            break;
+        }
+    }
+
+    if (!srcVkLib.empty()) {
+        std::filesystem::copy_file(srcVkLib, installedVkLib, std::filesystem::copy_options::overwrite_existing, ec);
+    }
+
+    // 2. Locate and copy libgnumon_gl.so
+    std::filesystem::path installedGlLib = destLibDir / "libgnumon_gl.so";
+    std::vector<std::filesystem::path> glCandidates = {
+        exeDir / "libgnumon_gl.so",
+        exeDir / "../lib/libgnumon_gl.so",
+        exeDir / "../lib64/libgnumon_gl.so",
+        exeDir / "../build-container/libgnumon_gl.so",
+        exeDir / "../build-host/libgnumon_gl.so"
+    };
+    for (const auto& cand : glCandidates) {
+        if (std::filesystem::exists(cand) && !std::filesystem::equivalent(cand, installedGlLib, ec)) {
+            std::filesystem::copy_file(cand, installedGlLib, std::filesystem::copy_options::overwrite_existing, ec);
+            break;
+        }
+    }
+
+    // 3. Locate and copy gnumon-run
+    std::filesystem::path installedRun = destBinDir / "gnumon-run";
+    std::vector<std::filesystem::path> runCandidates = {
+        exeDir / "gnumon-run",
+        exeDir / "../bin/gnumon-run",
+        exeDir / "scripts/gnumon-run",
+        exeDir / "../scripts/gnumon-run"
+    };
+    for (const auto& cand : runCandidates) {
+        if (std::filesystem::exists(cand) && !std::filesystem::equivalent(cand, installedRun, ec)) {
+            std::filesystem::copy_file(cand, installedRun, std::filesystem::copy_options::overwrite_existing, ec);
+            std::filesystem::permissions(installedRun,
+                std::filesystem::perms::owner_all | std::filesystem::perms::group_read | std::filesystem::perms::group_exec | std::filesystem::perms::others_read | std::filesystem::perms::others_exec,
+                std::filesystem::perm_options::replace, ec);
+            break;
+        }
+    }
+
+    // 4. Generate JSON manifests
+    {
+        std::ofstream imp(impFile);
+        imp << "{\n"
+            << "    \"file_format_version\" : \"1.0.0\",\n"
+            << "    \"layer\" : {\n"
+            << "        \"name\": \"VK_LAYER_GNUMON_capture\",\n"
+            << "        \"type\": \"GLOBAL\",\n"
+            << "        \"library_path\": \"" << installedVkLib.string() << "\",\n"
+            << "        \"api_version\": \"1.3.0\",\n"
+            << "        \"implementation_version\": \"1\",\n"
+            << "        \"description\": \"gnumon Linux PresentMon frame capture layer\",\n"
+            << "        \"functions\": {\n"
+            << "            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n"
+            << "        },\n"
+            << "        \"enable_environment\": {\n"
+            << "            \"ENABLE_GNUMON\": \"1\"\n"
+            << "        },\n"
+            << "        \"disable_environment\": {\n"
+            << "            \"DISABLE_GNUMON\": \"1\"\n"
+            << "        }\n"
+            << "    }\n"
+            << "}\n";
+    }
+
+    {
+        std::ofstream exp(expFile);
+        exp << "{\n"
+            << "    \"file_format_version\" : \"1.0.0\",\n"
+            << "    \"layer\" : {\n"
+            << "        \"name\": \"VK_LAYER_GNUMON_capture\",\n"
+            << "        \"type\": \"GLOBAL\",\n"
+            << "        \"library_path\": \"" << installedVkLib.string() << "\",\n"
+            << "        \"api_version\": \"1.3.0\",\n"
+            << "        \"implementation_version\": \"1\",\n"
+            << "        \"description\": \"gnumon Linux PresentMon frame capture layer\",\n"
+            << "        \"functions\": {\n"
+            << "            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n"
+            << "        }\n"
+            << "    }\n"
+            << "}\n";
+    }
+
+    btnInstallLayer_->setText("Uninstall Layer");
+    btnInstallLayer_->setStyleSheet("background-color: #37474f; color: #ffb74d;");
+    lblStatus_->setText("Status: Vulkan Layer installed to ~/.local/share/vulkan and gnumon-run ready!");
 }
 
 void MainWindow::PopulateProcessList() {

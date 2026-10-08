@@ -1,5 +1,6 @@
 build/
 build-*/
+build-appimage/
 _CPack_Packages/
 *.tar.gz
 *.csv
