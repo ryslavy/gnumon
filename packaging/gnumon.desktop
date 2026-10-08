@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=gnumon
+GenericName=Frame Timing & Telemetry Overlay
+Comment=Intel PresentMon port for Linux with In-Game HUD and Telemetry
+Exec=gnumon-gui
+Icon=gnumon
+Terminal=false
+Categories=Utility;Profiling;Monitor;Game;
+Keywords=presentmon;fps;overlay;telemetry;vulkan;frametime;
