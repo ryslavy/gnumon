@@ -1,0 +1,14 @@
+{
+    "file_format_version" : "1.0.0",
+    "layer" : {
+        "name": "VK_LAYER_GNUMON_capture",
+        "type": "GLOBAL",
+        "library_path": "./libVkLayer_gnumon.so",
+        "api_version": "1.3.0",
+        "implementation_version": "1",
+        "description": "gnumon Linux PresentMon frame capture layer",
+        "functions": {
+            "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
+        }
+    }
+}

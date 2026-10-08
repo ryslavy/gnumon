@@ -1,0 +1,25 @@
+FROM docker.io/library/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    g++-12 \
+    gcc-12 \
+    cmake \
+    ninja-build \
+    pkg-config \
+    libvulkan-dev \
+    libdrm-dev \
+    wayland-protocols \
+    libwayland-dev \
+    qt6-base-dev \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set GCC 12 as default for full C++20 support
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100 \
+    --slave /usr/bin/g++ g++ /usr/bin/g++-12
+
+WORKDIR /workspace

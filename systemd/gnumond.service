@@ -1,0 +1,13 @@
+[Unit]
+Description=gnumon Performance Monitoring Daemon
+Documentation=https://github.com/gnumon/gnumon-linux
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gnumond -f
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

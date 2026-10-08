@@ -1,0 +1,10 @@
+build/
+build-*/
+_CPack_Packages/
+*.tar.gz
+*.csv
+.cache/
+.vscode/
+.idea/
+*.swp
+*.orig

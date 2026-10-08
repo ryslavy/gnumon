@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# gnumon-run — Execution wrapper for Linux PresentMon (games, Steam, Proton, OpenGL, Vulkan)
+
+set -e
+
+if [ $# -eq 0 ]; then
+    echo "Usage: gnumon-run <command> [args...]"
+    echo "Example for Steam: gnumon-run %command%"
+    echo "Example: gnumon-run vkcube"
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Locate libraries (check installation dirs first, then relative build dirs)
+LIB_VK=""
+LIB_GL=""
+LAYER_PATH=""
+
+SEARCH_PATHS=(
+    "$HOME/.local/lib/gnumon"
+    "/usr/local/lib"
+    "/usr/lib"
+    "$SCRIPT_DIR"
+    "$SCRIPT_DIR/../build-host"
+    "$SCRIPT_DIR/build-host"
+)
+
+for p in "${SEARCH_PATHS[@]}"; do
+    if [ -f "$p/libVkLayer_gnumon.so" ] && [ -z "$LIB_VK" ]; then
+        LIB_VK="$p/libVkLayer_gnumon.so"
+        LAYER_PATH="$p"
+    fi
+    if [ -f "$p/libgnumon_gl.so" ] && [ -z "$LIB_GL" ]; then
+        LIB_GL="$p/libgnumon_gl.so"
+    fi
+done
+
+# Export Vulkan activation
+export ENABLE_GNUMON=1
+export VK_INSTANCE_LAYERS="VK_LAYER_GNUMON_capture${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}"
+
+if [ -n "$LAYER_PATH" ]; then
+    export VK_LAYER_PATH="$LAYER_PATH${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
+fi
+
+# Export OpenGL LD_PRELOAD
+if [ -n "$LIB_GL" ]; then
+    export LD_PRELOAD="$LIB_GL${LD_PRELOAD:+:$LD_PRELOAD}"
+fi
+
+exec "$@"
