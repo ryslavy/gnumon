@@ -16,7 +16,7 @@ endif()
 
 # Set RPATH so executables can find shared libraries next to them or in ../lib
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
-set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib;$ORIGIN/../lib64")
+set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib;$ORIGIN/../lib/gnumon;$ORIGIN/../lib64")
 
 # Compiler warnings
 add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)

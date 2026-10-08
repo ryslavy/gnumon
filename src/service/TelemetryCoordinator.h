@@ -10,6 +10,7 @@
 #include "../common/SlidingStatistics.h"
 #include <memory>
 #include <mutex>
+#include <deque>
 
 namespace gnumon::service {
 
@@ -41,18 +42,25 @@ public:
     void SetInGameOverlayEnabled(bool enabled);
     bool IsInGameOverlayEnabled() const;
 
+    void SetRecordingState(bool active);
+    bool IsRecordingActive() const;
+
 private:
+    void RecordFrameLocked(const ipc::FrameEvent& f);
+
     std::unique_ptr<control::IGpuTelemetryProvider> gpuProvider_;
     control::CpuTelemetry cpuTelemetry_;
     control::InputLatencyTracker inputTracker_;
     ipc::FrameRingConsumer frameConsumer_;
     uint32_t trackedPid_ = 0;
+    bool recordingActive_ = false;
 
     mutable std::mutex dataMutex_;
     control::GpuMetrics latestGpuMetrics_{};
     control::CpuMetrics latestCpuMetrics_{};
     ipc::FrameEvent latestFrame_{};
     ipc::FrameEvent prevFrame_{};
+    std::deque<ipc::FrameEvent> frameEventQueue_;
     common::SlidingStatistics fpsHistory_;
     common::SlidingStatistics displayedFpsHistory_;
     common::SlidingStatistics frameTimeHistory_;

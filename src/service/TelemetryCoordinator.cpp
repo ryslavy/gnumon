@@ -74,6 +74,53 @@ void TelemetryCoordinator::StopTrackingProcess(uint32_t /*pid*/) {
     frameConsumer_.Close();
 }
 
+void TelemetryCoordinator::RecordFrameLocked(const ipc::FrameEvent& f) {
+    if (latestFrame_.frameId > 0) {
+        prevFrame_ = latestFrame_;
+    }
+    latestFrame_ = f;
+
+    if (f.frameTimeNs > 0) {
+        double fps = 1'000'000'000.0 / static_cast<double>(f.frameTimeNs);
+        double ftMs = static_cast<double>(f.frameTimeNs) / 1'000'000.0;
+        fpsHistory_.Push(f.presentStartTimestampNs, fps);
+        frameTimeHistory_.Push(f.presentStartTimestampNs, ftMs);
+    }
+
+    // Displayed FPS (tracking non-dropped frames)
+    if (f.dropped == 0) {
+        double dispFps = 0.0;
+        if (prevFrame_.displayTimestampNs > 0 && f.displayTimestampNs > prevFrame_.displayTimestampNs) {
+            uint64_t dispDeltaNs = f.displayTimestampNs - prevFrame_.displayTimestampNs;
+            dispFps = 1'000'000'000.0 / static_cast<double>(dispDeltaNs);
+        } else if (f.frameTimeNs > 0) {
+            dispFps = 1'000'000'000.0 / static_cast<double>(f.frameTimeNs);
+        }
+        if (dispFps > 0.0) {
+            displayedFpsHistory_.Push(f.displayTimestampNs, dispFps);
+        }
+    }
+
+    // PC / Render-to-Display Latency
+    if (f.displayTimestampNs >= f.cpuStartTimestampNs && f.cpuStartTimestampNs > 0) {
+        double latMs = static_cast<double>(f.displayTimestampNs - f.cpuStartTimestampNs) / 1'000'000.0;
+        latencyHistory_.Push(f.displayTimestampNs, latMs);
+    } else if (f.gpuDurationNs > 0) {
+        double latMs = static_cast<double>(f.gpuDurationNs + f.presentDurationNs) / 1'000'000.0;
+        latencyHistory_.Push(f.presentStartTimestampNs, latMs);
+    }
+
+    // Animation Error: |delta(display) - delta(app/simulation)| in ms
+    if (prevFrame_.frameId > 0 && f.displayTimestampNs > prevFrame_.displayTimestampNs) {
+        double deltaDispMs = static_cast<double>(f.displayTimestampNs - prevFrame_.displayTimestampNs) / 1'000'000.0;
+        double deltaAppMs = (f.cpuStartTimestampNs > prevFrame_.cpuStartTimestampNs && prevFrame_.cpuStartTimestampNs > 0)
+            ? (static_cast<double>(f.cpuStartTimestampNs - prevFrame_.cpuStartTimestampNs) / 1'000'000.0)
+            : (static_cast<double>(f.frameTimeNs) / 1'000'000.0);
+        double animErrMs = std::abs(deltaDispMs - deltaAppMs);
+        animErrorHistory_.Push(f.displayTimestampNs, animErrMs);
+    }
+}
+
 bool TelemetryCoordinator::GetLatestFrame(ipc::FrameEvent& outEvent) {
     std::lock_guard<std::mutex> lock(dataMutex_);
     if (!frameConsumer_.IsConnected()) {
@@ -84,62 +131,22 @@ bool TelemetryCoordinator::GetLatestFrame(ipc::FrameEvent& outEvent) {
         }
         if (target > 0) {
             frameConsumer_.Open(target);
+            if (recordingActive_) {
+                frameConsumer_.SetRecordingActive(true);
+            }
         }
     }
 
     ipc::FrameEvent event{};
     bool hasNew = false;
 
-    auto recordFrame = [&](const ipc::FrameEvent& f) {
-        if (latestFrame_.frameId > 0) {
-            prevFrame_ = latestFrame_;
-        }
-        latestFrame_ = f;
-
-        if (f.frameTimeNs > 0) {
-            double fps = 1'000'000'000.0 / static_cast<double>(f.frameTimeNs);
-            double ftMs = static_cast<double>(f.frameTimeNs) / 1'000'000.0;
-            fpsHistory_.Push(f.presentStartTimestampNs, fps);
-            frameTimeHistory_.Push(f.presentStartTimestampNs, ftMs);
-        }
-
-        // Displayed FPS (tracking non-dropped frames)
-        if (f.dropped == 0) {
-            double dispFps = 0.0;
-            if (prevFrame_.displayTimestampNs > 0 && f.displayTimestampNs > prevFrame_.displayTimestampNs) {
-                uint64_t dispDeltaNs = f.displayTimestampNs - prevFrame_.displayTimestampNs;
-                dispFps = 1'000'000'000.0 / static_cast<double>(dispDeltaNs);
-            } else if (f.frameTimeNs > 0) {
-                dispFps = 1'000'000'000.0 / static_cast<double>(f.frameTimeNs);
-            }
-            if (dispFps > 0.0) {
-                displayedFpsHistory_.Push(f.displayTimestampNs, dispFps);
-            }
-        }
-
-        // PC / Render-to-Display Latency
-        if (f.displayTimestampNs >= f.cpuStartTimestampNs && f.cpuStartTimestampNs > 0) {
-            double latMs = static_cast<double>(f.displayTimestampNs - f.cpuStartTimestampNs) / 1'000'000.0;
-            latencyHistory_.Push(f.displayTimestampNs, latMs);
-        } else if (f.gpuDurationNs > 0) {
-            double latMs = static_cast<double>(f.gpuDurationNs + f.presentDurationNs) / 1'000'000.0;
-            latencyHistory_.Push(f.presentStartTimestampNs, latMs);
-        }
-
-        // Animation Error: |delta(display) - delta(app/simulation)| in ms
-        if (prevFrame_.frameId > 0 && f.displayTimestampNs > prevFrame_.displayTimestampNs) {
-            double deltaDispMs = static_cast<double>(f.displayTimestampNs - prevFrame_.displayTimestampNs) / 1'000'000.0;
-            double deltaAppMs = (f.cpuStartTimestampNs > prevFrame_.cpuStartTimestampNs && prevFrame_.cpuStartTimestampNs > 0)
-                ? (static_cast<double>(f.cpuStartTimestampNs - prevFrame_.cpuStartTimestampNs) / 1'000'000.0)
-                : (static_cast<double>(f.frameTimeNs) / 1'000'000.0);
-            double animErrMs = std::abs(deltaDispMs - deltaAppMs);
-            animErrorHistory_.Push(f.displayTimestampNs, animErrMs);
-        }
-    };
-
-    // Drain to latest frame
+    // Drain to latest frame and preserve every frame in the consumer queue
     while (frameConsumer_.Pop(event)) {
-        recordFrame(event);
+        RecordFrameLocked(event);
+        frameEventQueue_.push_back(event);
+        if (frameEventQueue_.size() > 8192) {
+            frameEventQueue_.pop_front();
+        }
         hasNew = true;
     }
 
@@ -152,24 +159,59 @@ bool TelemetryCoordinator::GetLatestFrame(ipc::FrameEvent& outEvent) {
 
 bool TelemetryCoordinator::PopFrame(ipc::FrameEvent& outEvent) {
     std::lock_guard<std::mutex> lock(dataMutex_);
-    if (!frameConsumer_.IsConnected() && trackedPid_ > 0) {
-        frameConsumer_.Open(trackedPid_);
+    if (!frameConsumer_.IsConnected()) {
+        uint32_t target = trackedPid_;
+        if (target == 0) {
+            auto active = common::GetActiveRingPids();
+            if (!active.empty()) target = active.front();
+        }
+        if (target > 0) {
+            frameConsumer_.Open(target);
+            if (recordingActive_) {
+                frameConsumer_.SetRecordingActive(true);
+            }
+        }
     }
 
-    if (frameConsumer_.Pop(outEvent)) {
-        if (latestFrame_.frameId > 0) {
-            prevFrame_ = latestFrame_;
+    // Drain any remaining frames into the FIFO queue
+    ipc::FrameEvent event{};
+    while (frameConsumer_.Pop(event)) {
+        RecordFrameLocked(event);
+        frameEventQueue_.push_back(event);
+        if (frameEventQueue_.size() > 8192) {
+            frameEventQueue_.pop_front();
         }
-        latestFrame_ = outEvent;
-        if (outEvent.frameTimeNs > 0) {
-            double fps = 1'000'000'000.0 / static_cast<double>(outEvent.frameTimeNs);
-            double ftMs = static_cast<double>(outEvent.frameTimeNs) / 1'000'000.0;
-            fpsHistory_.Push(outEvent.presentStartTimestampNs, fps);
-            frameTimeHistory_.Push(outEvent.presentStartTimestampNs, ftMs);
-        }
+    }
+
+    if (!frameEventQueue_.empty()) {
+        outEvent = frameEventQueue_.front();
+        frameEventQueue_.pop_front();
         return true;
     }
     return false;
+}
+
+void TelemetryCoordinator::SetRecordingState(bool active) {
+    std::lock_guard<std::mutex> lock(dataMutex_);
+    recordingActive_ = active;
+    if (!frameConsumer_.IsConnected()) {
+        uint32_t target = trackedPid_;
+        if (target == 0) {
+            auto active = common::GetActiveRingPids();
+            if (!active.empty()) target = active.front();
+        }
+        if (target > 0) {
+            frameConsumer_.Open(target);
+        }
+    }
+    if (frameConsumer_.IsConnected()) {
+        frameConsumer_.SetRecordingActive(active);
+    }
+}
+
+bool TelemetryCoordinator::IsRecordingActive() const {
+    std::lock_guard<std::mutex> lock(dataMutex_);
+    return recordingActive_;
 }
 
 double TelemetryCoordinator::GetStatisticalMetric(PM_METRIC metric, PM_STAT stat, double windowSizeMs) {

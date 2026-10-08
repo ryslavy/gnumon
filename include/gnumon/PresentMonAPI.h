@@ -451,6 +451,8 @@ extern "C" {
 	PRESENTMON_API2_EXPORT PM_STATUS pmSetHotkeys(PM_SESSION_HANDLE handle, const char* inGameHud, const char* record, const char* overlay, const char* miniHud);
 	PRESENTMON_API2_EXPORT PM_STATUS pmSetInGameOverlayState(PM_SESSION_HANDLE handle, bool enabled);
 	PRESENTMON_API2_EXPORT PM_STATUS pmGetInGameOverlayState(PM_SESSION_HANDLE handle, bool* pEnabled);
+	PRESENTMON_API2_EXPORT PM_STATUS pmSetRecordingState(PM_SESSION_HANDLE handle, bool recording);
+	PRESENTMON_API2_EXPORT PM_STATUS pmGetRecordingState(PM_SESSION_HANDLE handle, bool* pRecording);
 
 #ifdef __cplusplus
 }

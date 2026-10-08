@@ -14,6 +14,7 @@
 #include <vector>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include "../common/ProcUtils.h"
 
 namespace gnumon::gui {
@@ -694,6 +695,16 @@ void MainWindow::OnPollTimer() {
 
     if (!query_) return;
 
+    if (trackedPid_ == 0) {
+        auto activePids = common::GetActiveRingPids();
+        if (!activePids.empty()) {
+            trackedPid_ = activePids.front();
+            if (session_) {
+                pmStartTrackingProcess(session_, trackedPid_);
+            }
+        }
+    }
+
     QueryPayload data{};
     uint32_t numSwapChains = 0;
     if (pmPollDynamicQuery(query_, trackedPid_, reinterpret_cast<uint8_t*>(&data), &numSwapChains) == PM_STATUS_SUCCESS) {
@@ -732,6 +743,7 @@ void MainWindow::OnPollTimer() {
                 csvFile_ << frame->processId << ","
                          << "0x" << std::hex << frame->swapChain << std::dec << ","
                          << "Vulkan,"
+                         << std::fixed << std::setprecision(3)
                          << frame->cpuStartTime << ","
                          << frame->frameTimeMs << ","
                          << frame->displayedFps << ","
@@ -747,6 +759,7 @@ void MainWindow::OnPollTimer() {
             if (numFrames < BATCH_SIZE) break;
             numFrames = BATCH_SIZE;
         }
+        csvFile_.flush();
 
         lblStatus_->setText(QString("Status: Recording... %1 frames captured").arg(recordedFramesCount_));
     }
@@ -804,12 +817,26 @@ void MainWindow::OnOpenCapturesFolder() {
 void MainWindow::OnToggleRecording() {
     isRecording_ = !isRecording_;
     if (isRecording_) {
+        if (trackedPid_ == 0) {
+            auto activePids = common::GetActiveRingPids();
+            if (!activePids.empty()) {
+                trackedPid_ = activePids.front();
+            }
+        }
+        if (session_) {
+            pmStartTrackingProcess(session_, trackedPid_);
+            pmSetRecordingState(session_, true);
+        }
+
         QString filename = QString("gnumon_capture_%1.csv").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
         currentCapturePath_ = GetCapturesDirectory() + "/" + filename;
         csvFile_.open(currentCapturePath_.toStdString());
         if (!csvFile_.is_open()) {
             QMessageBox::critical(this, "Capture Error", QString("Could not create CSV file at:\n%1").arg(currentCapturePath_));
             isRecording_ = false;
+            if (session_) {
+                pmSetRecordingState(session_, false);
+            }
             return;
         }
 
@@ -817,6 +844,7 @@ void MainWindow::OnToggleRecording() {
         csvFile_ << "ProcessID,SwapChainAddress,Runtime,CPUStartTime,CPUPresentTimeMs,DisplayedFPS,"
                  << "InPresentAPIMs,GPUTimeMs,GPUPowerW,GPUTemperatureC,GPUUtilizationPercent,"
                  << "CPUUtilizationPercent,CPUPowerW\n";
+        csvFile_.flush();
 
         std::vector<PM_QUERY_ELEMENT> frameElements = {
             { PM_METRIC_PROCESS_ID, PM_STAT_NONE, 0, 0, offsetof(FramePayload, processId), sizeof(uint32_t) },
@@ -845,7 +873,11 @@ void MainWindow::OnToggleRecording() {
         btnRecord_->setStyleSheet("padding: 6px 16px; font-weight: bold; background-color: #c62828; color: white; border-radius: 4px;");
         lblStatus_->setText(QString("Status: Recording to %1...").arg(currentCapturePath_));
     } else {
+        if (session_) {
+            pmSetRecordingState(session_, false);
+        }
         if (csvFile_.is_open()) {
+            csvFile_.flush();
             csvFile_.close();
         }
         if (frameQuery_) {

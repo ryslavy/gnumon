@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <mutex>
+#include <deque>
 #if !defined(_WIN32)
 #include <dlfcn.h>
 #endif
@@ -202,6 +203,13 @@ public:
         uint32_t sw = sd.extent.width;
         uint32_t sh = sd.extent.height;
         if (sw == 0 || sh == 0) return false;
+
+        if (frameTimeMs > 0.0) {
+            frametimes_.push_back(static_cast<float>(frameTimeMs));
+            if (frametimes_.size() > 128) {
+                frametimes_.pop_front();
+            }
+        }
 
         std::vector<OverlayVertex> verts;
         GenerateHudVertices(verts, sw, sh, corner,
@@ -863,6 +871,7 @@ private:
         fontImage_ = VK_NULL_HANDLE;
         fontMemory_ = VK_NULL_HANDLE;
         commandPool_ = VK_NULL_HANDLE;
+        frametimes_.clear();
         initialized_ = false;
     }
 
@@ -879,6 +888,29 @@ private:
         verts.push_back(v00);
         verts.push_back(v11);
         verts.push_back(v01);
+    }
+
+    static void AddLine(std::vector<OverlayVertex>& verts, float x0, float y0, float x1, float y1,
+                        float thickness, float r, float g, float b, float a) {
+        float dx = x1 - x0;
+        float dy = y1 - y0;
+        float len = std::sqrt(dx * dx + dy * dy);
+        if (len < 0.0001f) return;
+
+        float nx = (-dy / len) * (thickness * 0.5f);
+        float ny = (dx / len) * (thickness * 0.5f);
+
+        OverlayVertex v0{x0 - nx, y0 - ny, -1.0f, -1.0f, r, g, b, a};
+        OverlayVertex v1{x1 - nx, y1 - ny, -1.0f, -1.0f, r, g, b, a};
+        OverlayVertex v2{x1 + nx, y1 + ny, -1.0f, -1.0f, r, g, b, a};
+        OverlayVertex v3{x0 + nx, y0 + ny, -1.0f, -1.0f, r, g, b, a};
+
+        verts.push_back(v0);
+        verts.push_back(v1);
+        verts.push_back(v2);
+        verts.push_back(v0);
+        verts.push_back(v2);
+        verts.push_back(v3);
     }
 
     static float AddChar(std::vector<OverlayVertex>& verts, char c, float x, float y, float scale,
@@ -926,7 +958,7 @@ private:
     {
         float uiScale = std::clamp(std::min(static_cast<float>(sw) / 1920.0f, static_cast<float>(sh) / 1080.0f), 0.85f, 2.0f);
         float cardW = 460.0f * uiScale;
-        float cardH = 92.0f * uiScale;
+        float cardH = 205.0f * uiScale;
         float margin = 20.0f * uiScale;
 
         float cardX = margin;
@@ -964,7 +996,7 @@ private:
         }
 
         // --- ROW 2: Present FPS + Displayed FPS + 1% Low ---
-        float r2_y = cardY + 36.0f * uiScale;
+        float r2_y = cardY + 34.0f * uiScale;
         curX = padX;
 
         snprintf(buf, sizeof(buf), "FPS: %.1f", displayedFps > 0.0 ? displayedFps : presentFps);
@@ -979,7 +1011,7 @@ private:
         }
 
         // --- ROW 3: FrameTime + Latency + Animation Error ---
-        float r3_y = cardY + 62.0f * uiScale;
+        float r3_y = cardY + 56.0f * uiScale;
         curX = padX;
 
         snprintf(buf, sizeof(buf), "FT: %.2f ms", frameTimeMs);
@@ -990,6 +1022,79 @@ private:
 
         snprintf(buf, sizeof(buf), "AnimErr: %.2f ms", animErrorMs);
         AddString(verts, buf, curX, r3_y, 0.80f * uiScale, 0.90f, 0.50f, 0.50f, 0.95f);
+
+        // --- ROW 4: Real-time Oscilloscope (Frametime Graph) ---
+        float gx = cardX + 12.0f * uiScale;
+        float gy = cardY + 76.0f * uiScale;
+        float gw = cardW - 24.0f * uiScale;
+        float gh = 96.0f * uiScale;
+
+        // Graph backdrop & crisp border
+        AddQuad(verts, gx - 1.0f, gy - 1.0f, gw + 2.0f, gh + 2.0f, 0.20f, 0.24f, 0.30f, 0.55f);
+        AddQuad(verts, gx, gy, gw, gh, 0.03f, 0.05f, 0.07f, 0.88f);
+
+        // Reference gridlines:
+        // Scale max frametime: minimum 40.0 ms, scaling up to 100.0 ms if large spikes exist
+        float maxFt = 40.0f;
+        for (float ft : frametimes_) {
+            if (ft > maxFt) maxFt = ft;
+        }
+        if (maxFt > 100.0f) maxFt = 100.0f;
+
+        auto getGraphY = [&](float ms) -> float {
+            float clamped = std::clamp(ms, 0.0f, maxFt);
+            return (gy + gh) - (clamped / maxFt) * (gh - 12.0f) - 6.0f;
+        };
+
+        // 16.66 ms line (60 FPS) in subtle green
+        float y60 = getGraphY(16.66f);
+        if (y60 > gy + 6.0f && y60 < gy + gh - 6.0f) {
+            AddQuad(verts, gx + 2.0f, y60, gw - 4.0f, 1.0f * uiScale, 0.30f, 0.69f, 0.31f, 0.35f);
+            AddString(verts, "16.6ms (60 FPS)", gx + 4.0f * uiScale, y60 - 8.0f * uiScale, 0.62f * uiScale, 0.30f, 0.69f, 0.31f, 0.70f);
+        }
+
+        // 33.33 ms line (30 FPS) in subtle red
+        float y30 = getGraphY(33.33f);
+        if (y30 > gy + 6.0f && y30 < gy + gh - 6.0f) {
+            AddQuad(verts, gx + 2.0f, y30, gw - 4.0f, 1.0f * uiScale, 0.95f, 0.26f, 0.21f, 0.30f);
+            AddString(verts, "33.3ms (30 FPS)", gx + 4.0f * uiScale, y30 - 8.0f * uiScale, 0.62f * uiScale, 0.95f, 0.26f, 0.21f, 0.65f);
+        }
+
+        // Draw rolling frametime curve & shaded glow
+        size_t nSamples = frametimes_.size();
+        if (nSamples >= 2) {
+            float stepX = gw / 127.0f;
+            float startX = (gx + gw) - (static_cast<float>(nSamples - 1) * stepX);
+
+            for (size_t i = 0; i < nSamples - 1; ++i) {
+                float px0 = startX + static_cast<float>(i) * stepX;
+                float py0 = getGraphY(frametimes_[i]);
+                float px1 = startX + static_cast<float>(i + 1) * stepX;
+                float py1 = getGraphY(frametimes_[i + 1]);
+
+                // Translucent fill under the curve
+                float bottomY = gy + gh - 1.0f;
+                OverlayVertex f0{px0, py0, -1.0f, -1.0f, 0.0f, 0.85f, 1.0f, 0.08f};
+                OverlayVertex f1{px1, py1, -1.0f, -1.0f, 0.0f, 0.85f, 1.0f, 0.08f};
+                OverlayVertex f2{px1, bottomY, -1.0f, -1.0f, 0.0f, 0.85f, 1.0f, 0.01f};
+                OverlayVertex f3{px0, bottomY, -1.0f, -1.0f, 0.0f, 0.85f, 1.0f, 0.01f};
+                verts.push_back(f0); verts.push_back(f1); verts.push_back(f2);
+                verts.push_back(f0); verts.push_back(f2); verts.push_back(f3);
+
+                // Sharp cyan line segment (1.8px * uiScale)
+                AddLine(verts, px0, py0, px1, py1, 1.8f * uiScale, 0.0f, 0.90f, 1.0f, 0.95f);
+            }
+        } else {
+            AddString(verts, "Streaming frametimes...", gx + 14.0f * uiScale, gy + 38.0f * uiScale, 0.75f * uiScale, 0.50f, 0.60f, 0.70f, 0.80f);
+        }
+
+        // --- ROW 5: Oscilloscope Legend & Footer ---
+        float legY = gy + gh + 7.0f * uiScale;
+        AddQuad(verts, gx + 2.0f * uiScale, legY + 2.0f * uiScale, 7.0f * uiScale, 7.0f * uiScale, 0.0f, 0.90f, 1.0f, 1.0f);
+        AddString(verts, "CPU Frametime", gx + 13.0f * uiScale, legY, 0.68f * uiScale, 0.75f, 0.85f, 0.95f, 0.90f);
+
+        snprintf(buf, sizeof(buf), "Cur: %.2f ms", frameTimeMs);
+        AddString(verts, buf, gx + gw - 90.0f * uiScale, legY, 0.68f * uiScale, 0.0f, 0.90f, 1.0f, 0.95f);
     }
 
     mutable std::mutex mutex_;
@@ -1016,6 +1121,7 @@ private:
     VkPipeline pipeline_ = VK_NULL_HANDLE;
 
     std::unordered_map<VkSwapchainKHR, SwapchainData> swapchains_;
+    std::deque<float> frametimes_;
 
     // Function pointers
     PFN_vkCreateCommandPool createCommandPool_ = nullptr;

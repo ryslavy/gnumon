@@ -776,4 +776,22 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetInGameOverlayState(PM_SESSION_HANDLE handl
     return PM_STATUS_SERVICE_ERROR;
 }
 
+PRESENTMON_API2_EXPORT PM_STATUS pmSetRecordingState(PM_SESSION_HANDLE handle, bool recording) {
+    if (!handle) return PM_STATUS_BAD_HANDLE;
+    if (handle->coordinator) {
+        handle->coordinator->SetRecordingState(recording);
+        return PM_STATUS_SUCCESS;
+    }
+    return PM_STATUS_SERVICE_ERROR;
+}
+
+PRESENTMON_API2_EXPORT PM_STATUS pmGetRecordingState(PM_SESSION_HANDLE handle, bool* pRecording) {
+    if (!handle || !pRecording) return PM_STATUS_BAD_HANDLE;
+    if (handle->coordinator) {
+        *pRecording = handle->coordinator->IsRecordingActive();
+        return PM_STATUS_SUCCESS;
+    }
+    return PM_STATUS_SERVICE_ERROR;
+}
+
 } // extern "C"

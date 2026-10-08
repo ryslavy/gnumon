@@ -42,6 +42,8 @@ if [ -f "$LIB_DIR"/libgnumon_gl.so ]; then
 fi
 if ls "$LIB_DIR"/libpresentmon.so* 1>/dev/null 2>&1; then
     cp -a "$LIB_DIR"/libpresentmon.so* "$DEST_LIB/"
+    mkdir -p "$HOME/.local/lib"
+    cp -a "$LIB_DIR"/libpresentmon.so* "$HOME/.local/lib/"
 fi
 
 echo "==> Copying executables to $DEST_BIN..."
