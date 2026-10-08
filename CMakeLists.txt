@@ -14,9 +14,9 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Set RPATH to $ORIGIN so executables can find shared libraries next to them
+# Set RPATH so executables can find shared libraries next to them or in ../lib
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
-set(CMAKE_INSTALL_RPATH "$ORIGIN")
+set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib;$ORIGIN/../lib64")
 
 # Compiler warnings
 add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
