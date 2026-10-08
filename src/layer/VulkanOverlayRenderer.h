@@ -6,6 +6,9 @@
 #include <cstring>
 #include <cmath>
 #include <cstdio>
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#endif
 #include "Font8x8.h"
 
 namespace gnumon::layer {
@@ -21,9 +24,10 @@ public:
     }
 
     bool Initialize(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t queueFamilyIndex,
-                    PFN_vkGetDeviceProcAddr gdpa, PFN_vkGetInstanceProcAddr gipa, VkInstance instance)
+                    PFN_vkGetDeviceProcAddr gdpa, PFN_vkGetPhysicalDeviceMemoryProperties getMemProps)
     {
-        if (initialized_) return true;
+        if (initialized_ && device_ == device) return true;
+        if (initialized_) Cleanup();
         if (!device || !gdpa) return false;
 
         device_ = device;
@@ -44,22 +48,20 @@ public:
         bindBufferMemory_ = (PFN_vkBindBufferMemory)gdpa(device, "vkBindBufferMemory");
         mapMemory_ = (PFN_vkMapMemory)gdpa(device, "vkMapMemory");
         unmapMemory_ = (PFN_vkUnmapMemory)gdpa(device, "vkUnmapMemory");
+        flushMappedMemoryRanges_ = (PFN_vkFlushMappedMemoryRanges)gdpa(device, "vkFlushMappedMemoryRanges");
         queueSubmit_ = (PFN_vkQueueSubmit)gdpa(device, "vkQueueSubmit");
         queueWaitIdle_ = (PFN_vkQueueWaitIdle)gdpa(device, "vkQueueWaitIdle");
         deviceWaitIdle_ = (PFN_vkDeviceWaitIdle)gdpa(device, "vkDeviceWaitIdle");
 
-        PFN_vkGetPhysicalDeviceMemoryProperties getMemProps = nullptr;
-        if (gipa) {
-            if (instance) {
-                getMemProps = (PFN_vkGetPhysicalDeviceMemoryProperties)gipa(instance, "vkGetPhysicalDeviceMemoryProperties");
-            }
-            if (!getMemProps) {
-                getMemProps = (PFN_vkGetPhysicalDeviceMemoryProperties)gipa(VK_NULL_HANDLE, "vkGetPhysicalDeviceMemoryProperties");
-            }
+        if (!getMemProps) {
+#if !defined(_WIN32)
+            getMemProps = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
+                dlsym(RTLD_DEFAULT, "vkGetPhysicalDeviceMemoryProperties"));
+#endif
         }
 
         if (!createCommandPool_ || !allocateCommandBuffers_ || !createBuffer_ ||
-            !allocateMemory_ || !mapMemory_ || !getMemProps || !queueSubmit_ || !queueWaitIdle_) {
+            !allocateMemory_ || !mapMemory_ || !getMemProps || !queueSubmit_) {
             return false;
         }
 
@@ -107,6 +109,16 @@ public:
                 memTypeIndex = i;
                 foundMemType = true;
                 break;
+            }
+        }
+        if (!foundMemType) {
+            for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+                if ((memReq.memoryTypeBits & (1 << i)) &&
+                    (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+                    memTypeIndex = i;
+                    foundMemType = true;
+                    break;
+                }
             }
         }
         if (!foundMemType) {
@@ -259,7 +271,17 @@ public:
         drawString(290, 42, buf, coralCol);
 
         // Line 4: Hints
-        drawString(10, 60, "F11: Toggle Overlay   |   F10: Toggle Capture", subCol);
+        drawString(10, 60, "F9: In-Game HUD   |   F11: Desktop   |   F10: Capture", subCol);
+
+        // Ensure host writes to mapped memory are visible to GPU
+        if (flushMappedMemoryRanges_ && stagingMemory_ != VK_NULL_HANDLE) {
+            VkMappedMemoryRange range{};
+            range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            range.memory = stagingMemory_;
+            range.offset = 0;
+            range.size = VK_WHOLE_SIZE;
+            flushMappedMemoryRanges_(device_, 1, &range);
+        }
 
         // Record transfer command buffer
         VkCommandBufferBeginInfo beginInfo{};
@@ -278,11 +300,11 @@ public:
         barrier1.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier1.image = image;
         barrier1.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        barrier1.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        barrier1.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT;
         barrier1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
         cmdPipelineBarrier_(commandBuffer_,
-            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,
             0, 0, nullptr, 0, nullptr, 1, &barrier1);
 
@@ -317,7 +339,7 @@ public:
         barrier2.image = image;
         barrier2.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         barrier2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier2.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        barrier2.dstAccessMask = 0;
 
         cmdPipelineBarrier_(commandBuffer_,
             VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -360,6 +382,7 @@ private:
     PFN_vkBindBufferMemory bindBufferMemory_ = nullptr;
     PFN_vkMapMemory mapMemory_ = nullptr;
     PFN_vkUnmapMemory unmapMemory_ = nullptr;
+    PFN_vkFlushMappedMemoryRanges flushMappedMemoryRanges_ = nullptr;
     PFN_vkQueueSubmit queueSubmit_ = nullptr;
     PFN_vkQueueWaitIdle queueWaitIdle_ = nullptr;
     PFN_vkDeviceWaitIdle deviceWaitIdle_ = nullptr;

@@ -104,6 +104,16 @@ public:
     bool IsOverlayEnabled() const {
         return ring_ && (ring_->controlFlags.load(std::memory_order_acquire) & 2);
     }
+    void SetRecordingActive(bool active) {
+        if (!ring_) return;
+        if (active) ring_->controlFlags.fetch_or(1, std::memory_order_release);
+        else ring_->controlFlags.fetch_and(~1, std::memory_order_release);
+    }
+    void SetOverlayEnabled(bool enabled) {
+        if (!ring_) return;
+        if (enabled) ring_->controlFlags.fetch_or(2, std::memory_order_release);
+        else ring_->controlFlags.fetch_and(~2, std::memory_order_release);
+    }
 
     void Close() {
         if (ring_) {
