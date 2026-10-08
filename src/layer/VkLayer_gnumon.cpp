@@ -46,6 +46,8 @@ struct DeviceDispatch {
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     PFN_vkGetInstanceProcAddr getInstProcAddr = nullptr;
     uint32_t defaultQueueFamilyIndex = 0;
+    VkQueue graphicsQueue = VK_NULL_HANDLE;
+    uint32_t graphicsQueueFamilyIndex = 0;
 };
 
 struct SwapchainInfo {
@@ -280,6 +282,32 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateDevice(
         if (pCreateInfo && pCreateInfo->queueCreateInfoCount > 0 && pCreateInfo->pQueueCreateInfos) {
             disp.defaultQueueFamilyIndex = pCreateInfo->pQueueCreateInfos[0].queueFamilyIndex;
         }
+
+        // Detect graphics queue family
+        PFN_vkGetPhysicalDeviceQueueFamilyProperties getQFamProps = nullptr;
+        if (nextGIPA) {
+            getQFamProps = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
+                nextGIPA(VK_NULL_HANDLE, "vkGetPhysicalDeviceQueueFamilyProperties"));
+        }
+        uint32_t gfxQFam = disp.defaultQueueFamilyIndex;
+        if (getQFamProps) {
+            uint32_t qCount = 0;
+            getQFamProps(physicalDevice, &qCount, nullptr);
+            if (qCount > 0) {
+                std::vector<VkQueueFamilyProperties> qProps(qCount);
+                getQFamProps(physicalDevice, &qCount, qProps.data());
+                for (uint32_t i = 0; i < qCount; ++i) {
+                    if (qProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                        gfxQFam = i;
+                        break;
+                    }
+                }
+            }
+        }
+        disp.graphicsQueueFamilyIndex = gfxQFam;
+        if (disp.getDeviceQueue) {
+            disp.getDeviceQueue(*pDevice, gfxQFam, 0, &disp.graphicsQueue);
+        }
         g_deviceDispatch[GetDispatchKey(*pDevice)] = disp;
     }
 
@@ -322,8 +350,17 @@ static VKAPI_ATTR void VKAPI_CALL gnumon_vkGetDeviceQueue(
     if (nextFunc) {
         nextFunc(device, queueFamilyIndex, queueIndex, pQueue);
         if (pQueue && *pQueue) {
-            std::lock_guard<std::mutex> qlock(g_queueMutex);
-            g_queueFamilyMap[*pQueue] = queueFamilyIndex;
+            {
+                std::lock_guard<std::mutex> qlock(g_queueMutex);
+                g_queueFamilyMap[*pQueue] = queueFamilyIndex;
+            }
+            std::lock_guard<std::mutex> dlock(g_dispatchMutex);
+            auto it = g_deviceDispatch.find(GetDispatchKey(device));
+            if (it != g_deviceDispatch.end()) {
+                if (queueFamilyIndex == it->second.graphicsQueueFamilyIndex) {
+                    it->second.graphicsQueue = *pQueue;
+                }
+            }
         }
     }
 }
@@ -344,8 +381,17 @@ static VKAPI_ATTR void VKAPI_CALL gnumon_vkGetDeviceQueue2(
     if (nextFunc) {
         nextFunc(device, pQueueInfo, pQueue);
         if (pQueue && *pQueue && pQueueInfo) {
-            std::lock_guard<std::mutex> qlock(g_queueMutex);
-            g_queueFamilyMap[*pQueue] = pQueueInfo->queueFamilyIndex;
+            {
+                std::lock_guard<std::mutex> qlock(g_queueMutex);
+                g_queueFamilyMap[*pQueue] = pQueueInfo->queueFamilyIndex;
+            }
+            std::lock_guard<std::mutex> dlock(g_dispatchMutex);
+            auto it = g_deviceDispatch.find(GetDispatchKey(device));
+            if (it != g_deviceDispatch.end()) {
+                if (pQueueInfo->queueFamilyIndex == it->second.graphicsQueueFamilyIndex) {
+                    it->second.graphicsQueue = *pQueue;
+                }
+            }
         }
     }
 }
@@ -373,6 +419,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkGetSwapchainImagesKHR(
         auto it = g_swapchains.find(swapchain);
         if (it != g_swapchains.end()) {
             it->second.images.assign(pSwapchainImages, pSwapchainImages + *pSwapchainImageCount);
+            if (it->second.extent.width > 0 && it->second.extent.height > 0) {
+                g_overlayRenderer.OnSwapchainCreated(swapchain, it->second.format, it->second.extent,
+                                                     *pSwapchainImageCount, pSwapchainImages);
+            }
         }
     }
     return res;
@@ -385,10 +435,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateSwapchainKHR(
     const VkAllocationCallbacks* pAllocator,
     VkSwapchainKHR* pSwapchain)
 {
-    VkSwapchainCreateInfoKHR createInfo = *pCreateInfo;
-    // Add transfer destination usage so HUD overlay can be copied to swapchain image
-    createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
     PFN_vkCreateSwapchainKHR nextFunc = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_dispatchMutex);
@@ -400,11 +446,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateSwapchainKHR(
 
     VkResult res = VK_ERROR_INITIALIZATION_FAILED;
     if (nextFunc) {
-        res = nextFunc(device, &createInfo, pAllocator, pSwapchain);
-        if (res != VK_SUCCESS) {
-            // Fallback to original createInfo if driver rejected TRANSFER_DST_BIT
-            res = nextFunc(device, pCreateInfo, pAllocator, pSwapchain);
-        }
+        res = nextFunc(device, pCreateInfo, pAllocator, pSwapchain);
     }
 
     if (res == VK_SUCCESS && pSwapchain && *pSwapchain) {
@@ -428,6 +470,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateSwapchainKHR(
             if (getImages(device, *pSwapchain, &count, nullptr) == VK_SUCCESS && count > 0) {
                 info.images.resize(count);
                 getImages(device, *pSwapchain, &count, info.images.data());
+                g_overlayRenderer.OnSwapchainCreated(*pSwapchain, info.format, info.extent,
+                                                     count, info.images.data());
             }
         }
         g_swapchains[*pSwapchain] = info;
@@ -440,6 +484,8 @@ static VKAPI_ATTR void VKAPI_CALL gnumon_vkDestroySwapchainKHR(
     VkSwapchainKHR swapchain,
     const VkAllocationCallbacks* pAllocator)
 {
+    g_overlayRenderer.OnSwapchainDestroyed(swapchain);
+
     {
         std::lock_guard<std::mutex> lock(g_swapchainMutex);
         g_swapchains.erase(swapchain);
@@ -654,78 +700,75 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
 
     bool overlayActive = g_enableOverlay || g_producer.IsOverlayEnabled();
     bool isRec = g_producer.IsRecordingActive();
+    bool overlayRendered = false;
+    VkSemaphore overlaySignalSem = VK_NULL_HANDLE;
 
     // Render In-Game HUD into swapchain image before presenting
-    if (overlayActive && pPresentInfo && pPresentInfo->swapchainCount > 0) {
+    if (overlayActive && pPresentInfo && pPresentInfo->swapchainCount > 0 && pPresentInfo->pSwapchains && pPresentInfo->pImageIndices) {
         VkSwapchainKHR sc = pPresentInfo->pSwapchains[0];
-        uint32_t imgIdx = (pPresentInfo->pImageIndices) ? pPresentInfo->pImageIndices[0] : 0;
+        uint32_t imgIdx = pPresentInfo->pImageIndices[0];
 
         VkDevice dev = VK_NULL_HANDLE;
         VkFormat fmt = VK_FORMAT_B8G8R8A8_UNORM;
-        VkImage img = VK_NULL_HANDLE;
-        uint32_t scWidth = 1920;
-        uint32_t scHeight = 1080;
+        VkExtent2D extent{0, 0};
+        std::vector<VkImage> scImages;
         {
             std::lock_guard<std::mutex> slock(g_swapchainMutex);
             auto it = g_swapchains.find(sc);
             if (it != g_swapchains.end()) {
                 dev = it->second.device;
                 fmt = it->second.format;
-                if (it->second.extent.width > 0) scWidth = it->second.extent.width;
-                if (it->second.extent.height > 0) scHeight = it->second.extent.height;
-
-                // Fallback query if images were not cached during swapchain creation
-                if (it->second.images.empty()) {
-                    PFN_vkGetSwapchainImagesKHR getImages = nullptr;
-                    {
-                        std::lock_guard<std::mutex> dlock(g_dispatchMutex);
-                        auto dit = g_deviceDispatch.find(GetDispatchKey(dev));
-                        if (dit != g_deviceDispatch.end()) {
-                            getImages = dit->second.getSwapchainImagesKHR;
-                        }
-                    }
-                    if (getImages) {
-                        uint32_t count = 0;
-                        if (getImages(dev, sc, &count, nullptr) == VK_SUCCESS && count > 0) {
-                            it->second.images.resize(count);
-                            getImages(dev, sc, &count, it->second.images.data());
-                        }
-                    }
-                }
-
-                if (imgIdx < it->second.images.size()) {
-                    img = it->second.images[imgIdx];
-                }
+                extent = it->second.extent;
+                scImages = it->second.images;
             }
         }
 
-        if (dev && img) {
-            if (!g_overlayRenderer.IsInitialized()) {
+        if (dev) {
+            DeviceDispatch disp{};
+            {
                 std::lock_guard<std::mutex> dlock(g_dispatchMutex);
                 auto dit = g_deviceDispatch.find(GetDispatchKey(dev));
                 if (dit != g_deviceDispatch.end()) {
-                    uint32_t qFam = dit->second.defaultQueueFamilyIndex;
-                    {
-                        std::lock_guard<std::mutex> qlock(g_queueMutex);
-                        auto qit = g_queueFamilyMap.find(queue);
-                        if (qit != g_queueFamilyMap.end()) {
-                            qFam = qit->second;
-                        }
-                    }
-                    bool initOk = g_overlayRenderer.Initialize(dev, dit->second.physicalDevice, qFam,
-                                                               dit->second.getProcAddr,
-                                                               g_getPhysicalDeviceMemoryProperties);
-                    if (!initOk) {
-                        static bool loggedInitFail = false;
-                        if (!loggedInitFail) {
-                            fprintf(stderr, "[gnumon-layer] VulkanOverlayRenderer::Initialize returned false!\n");
-                            loggedInitFail = true;
-                        }
-                    }
+                    disp = dit->second;
                 }
             }
 
+            VkQueue gfxQueue = disp.graphicsQueue ? disp.graphicsQueue : queue;
+            uint32_t gfxQFam = disp.graphicsQueueFamilyIndex;
+            uint32_t presentQFam = disp.defaultQueueFamilyIndex;
+            {
+                std::lock_guard<std::mutex> qlock(g_queueMutex);
+                auto qit = g_queueFamilyMap.find(queue);
+                if (qit != g_queueFamilyMap.end()) {
+                    presentQFam = qit->second;
+                }
+            }
+
+            if (!g_overlayRenderer.IsInitialized() || g_overlayRenderer.GetDevice() != dev) {
+                g_overlayRenderer.Initialize(dev, disp.physicalDevice, gfxQueue, gfxQFam,
+                                             disp.getProcAddr,
+                                             g_getPhysicalDeviceMemoryProperties);
+            }
+
             if (g_overlayRenderer.IsInitialized()) {
+                // Ensure swapchain is registered in renderer
+                if (!g_overlayRenderer.HasSwapchain(sc)) {
+                    if (scImages.empty() && disp.getSwapchainImagesKHR) {
+                        uint32_t count = 0;
+                        if (disp.getSwapchainImagesKHR(dev, sc, &count, nullptr) == VK_SUCCESS && count > 0) {
+                            scImages.resize(count);
+                            disp.getSwapchainImagesKHR(dev, sc, &count, scImages.data());
+                            std::lock_guard<std::mutex> slock(g_swapchainMutex);
+                            g_swapchains[sc].images = scImages;
+                        }
+                    }
+                    if (!scImages.empty() && extent.width > 0 && extent.height > 0) {
+                        g_overlayRenderer.OnSwapchainCreated(sc, fmt, extent,
+                                                             static_cast<uint32_t>(scImages.size()),
+                                                             scImages.data());
+                    }
+                }
+
                 double presentFps = 0.0;
                 double ftMs = 0.0;
                 double lowFps = 0.0;
@@ -757,19 +800,26 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                         : ftMs;
                 }
 
-                g_overlayRenderer.RenderHud(queue, img, fmt,
-                                            presentFps, dispFps, lowFps,
-                                            ftMs, latMs, animErrMs, isRec,
-                                            g_hudCorner, scWidth, scHeight);
-
-                static bool loggedHudRender = false;
-                if (!loggedHudRender) {
-                    fprintf(stderr, "[gnumon-layer] In-Game HUD active: rendering frames directly into swapchain (%ux%u, format %d, corner %d)!\n",
-                            scWidth, scHeight, static_cast<int>(fmt), g_hudCorner);
-                    loggedHudRender = true;
+                if (g_overlayRenderer.HasSwapchain(sc)) {
+                    if (g_overlayRenderer.RenderHud(gfxQueue, queue, gfxQFam, presentQFam,
+                                                    sc, imgIdx,
+                                                    presentFps, dispFps, lowFps,
+                                                    ftMs, latMs, animErrMs, isRec,
+                                                    g_hudCorner,
+                                                    pPresentInfo->waitSemaphoreCount,
+                                                    pPresentInfo->pWaitSemaphores,
+                                                    &overlaySignalSem)) {
+                        overlayRendered = true;
+                    }
                 }
             }
         }
+    }
+
+    VkPresentInfoKHR presentCopy = *pPresentInfo;
+    if (overlayRendered && overlaySignalSem != VK_NULL_HANDLE) {
+        presentCopy.waitSemaphoreCount = 1;
+        presentCopy.pWaitSemaphores = &overlaySignalSem;
     }
 
     PFN_vkQueuePresentKHR nextFunc = nullptr;
@@ -785,7 +835,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
 
     VkResult result = VK_SUCCESS;
     if (nextFunc) {
-        result = nextFunc(queue, pPresentInfo);
+        result = nextFunc(queue, &presentCopy);
     }
 
     uint64_t presentEndNs = gnumon::common::Clock::GetTimestampNs();

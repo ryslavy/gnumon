@@ -73,6 +73,20 @@ cat <<EOF > "$DEST_IMPLICIT/VkLayer_gnumon.json"
         "functions": {
             "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
         },
+        "device_extensions": [
+            {
+                "name": "VK_KHR_swapchain",
+                "spec_version": "70",
+                "entrypoints": [
+                    "vkCreateSwapchainKHR",
+                    "vkDestroySwapchainKHR",
+                    "vkGetSwapchainImagesKHR",
+                    "vkAcquireNextImageKHR",
+                    "vkQueuePresentKHR",
+                    "vkAcquireNextImage2KHR"
+                ]
+            }
+        ],
         "enable_environment": {
             "ENABLE_GNUMON": "1"
         },
@@ -96,10 +110,38 @@ cat <<EOF > "$DEST_EXPLICIT/VkLayer_gnumon.json"
         "description": "gnumon Linux PresentMon frame capture layer",
         "functions": {
             "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
-        }
+        },
+        "device_extensions": [
+            {
+                "name": "VK_KHR_swapchain",
+                "spec_version": "70",
+                "entrypoints": [
+                    "vkCreateSwapchainKHR",
+                    "vkDestroySwapchainKHR",
+                    "vkGetSwapchainImagesKHR",
+                    "vkAcquireNextImageKHR",
+                    "vkQueuePresentKHR",
+                    "vkAcquireNextImage2KHR"
+                ]
+            }
+        ]
     }
 }
 EOF
+
+# Copy layer library directly to implicit and explicit directories for reliable loader resolution
+cp -f "$DEST_LIB/libVkLayer_gnumon.so" "$DEST_IMPLICIT/"
+cp -f "$DEST_LIB/libVkLayer_gnumon.so" "$DEST_EXPLICIT/"
+
+# Register layer into Flatpak Steam if present
+FLATPAK_DIR="$HOME/.var/app/com.valvesoftware.Steam"
+if [ -d "$FLATPAK_DIR" ]; then
+    echo "==> Registering layer for Flatpak Steam..."
+    FLATPAK_IMPLICIT="$FLATPAK_DIR/.local/share/vulkan/implicit_layer.d"
+    mkdir -p "$FLATPAK_IMPLICIT"
+    cp -f "$DEST_LIB/libVkLayer_gnumon.so" "$FLATPAK_IMPLICIT/"
+    sed "s|\"$DEST_LIB/libVkLayer_gnumon.so\"|\"$FLATPAK_IMPLICIT/libVkLayer_gnumon.so\"|g" "$DEST_IMPLICIT/VkLayer_gnumon.json" > "$FLATPAK_IMPLICIT/VkLayer_gnumon.json"
+fi
 
 echo "==> Successfully installed gnumon layer & tools!"
 echo "You can now run games with:"

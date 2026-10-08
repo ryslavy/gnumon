@@ -360,8 +360,17 @@ void MainWindow::OnToggleLayerInstall() {
         std::error_code ec;
         std::filesystem::remove(impFile, ec);
         std::filesystem::remove(expFile, ec);
+        std::filesystem::remove(destImpDir / "libVkLayer_gnumon.so", ec);
+        std::filesystem::remove(destExpDir / "libVkLayer_gnumon.so", ec);
         std::filesystem::remove_all(destLibDir, ec);
         std::filesystem::remove(destBinDir / "gnumon-run", ec);
+
+        std::filesystem::path flatpakSteam = homePath / ".var/app/com.valvesoftware.Steam";
+        if (std::filesystem::exists(flatpakSteam)) {
+            std::filesystem::path flatpakImplicit = flatpakSteam / ".local/share/vulkan/implicit_layer.d";
+            std::filesystem::remove(flatpakImplicit / "VkLayer_gnumon.json", ec);
+            std::filesystem::remove(flatpakImplicit / "libVkLayer_gnumon.so", ec);
+        }
 
         btnInstallLayer_->setText("Install Layer");
         btnInstallLayer_->setStyleSheet("");
@@ -459,6 +468,20 @@ void MainWindow::OnToggleLayerInstall() {
             << "        \"functions\": {\n"
             << "            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n"
             << "        },\n"
+            << "        \"device_extensions\": [\n"
+            << "            {\n"
+            << "                \"name\": \"VK_KHR_swapchain\",\n"
+            << "                \"spec_version\": \"70\",\n"
+            << "                \"entrypoints\": [\n"
+            << "                    \"vkCreateSwapchainKHR\",\n"
+            << "                    \"vkDestroySwapchainKHR\",\n"
+            << "                    \"vkGetSwapchainImagesKHR\",\n"
+            << "                    \"vkAcquireNextImageKHR\",\n"
+            << "                    \"vkQueuePresentKHR\",\n"
+            << "                    \"vkAcquireNextImage2KHR\"\n"
+            << "                ]\n"
+            << "            }\n"
+            << "        ],\n"
             << "        \"enable_environment\": {\n"
             << "            \"ENABLE_GNUMON\": \"1\"\n"
             << "        },\n"
@@ -482,9 +505,73 @@ void MainWindow::OnToggleLayerInstall() {
             << "        \"description\": \"gnumon Linux PresentMon frame capture layer\",\n"
             << "        \"functions\": {\n"
             << "            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n"
-            << "        }\n"
+            << "        },\n"
+            << "        \"device_extensions\": [\n"
+            << "            {\n"
+            << "                \"name\": \"VK_KHR_swapchain\",\n"
+            << "                \"spec_version\": \"70\",\n"
+            << "                \"entrypoints\": [\n"
+            << "                    \"vkCreateSwapchainKHR\",\n"
+            << "                    \"vkDestroySwapchainKHR\",\n"
+            << "                    \"vkGetSwapchainImagesKHR\",\n"
+            << "                    \"vkAcquireNextImageKHR\",\n"
+            << "                    \"vkQueuePresentKHR\",\n"
+            << "                    \"vkAcquireNextImage2KHR\"\n"
+            << "                ]\n"
+            << "            }\n"
+            << "        ]\n"
             << "    }\n"
             << "}\n";
+    }
+
+    // 5. Copy library directly to implicit and explicit directories for fallback loader discovery
+    std::filesystem::copy_file(installedVkLib, destImpDir / "libVkLayer_gnumon.so",
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    std::filesystem::copy_file(installedVkLib, destExpDir / "libVkLayer_gnumon.so",
+                               std::filesystem::copy_options::overwrite_existing, ec);
+
+    // 6. Register layer into Flatpak Steam if installed
+    std::filesystem::path flatpakSteam = homePath / ".var/app/com.valvesoftware.Steam";
+    if (std::filesystem::exists(flatpakSteam)) {
+        std::filesystem::path flatpakImplicit = flatpakSteam / ".local/share/vulkan/implicit_layer.d";
+        std::filesystem::create_directories(flatpakImplicit, ec);
+        std::filesystem::path flatpakLib = flatpakImplicit / "libVkLayer_gnumon.so";
+        std::filesystem::copy_file(installedVkLib, flatpakLib, std::filesystem::copy_options::overwrite_existing, ec);
+        std::ofstream fimp(flatpakImplicit / "VkLayer_gnumon.json");
+        fimp << "{\n"
+             << "    \"file_format_version\" : \"1.0.0\",\n"
+             << "    \"layer\" : {\n"
+             << "        \"name\": \"VK_LAYER_GNUMON_capture\",\n"
+             << "        \"type\": \"GLOBAL\",\n"
+             << "        \"library_path\": \"" << flatpakLib.string() << "\",\n"
+             << "        \"api_version\": \"1.3.0\",\n"
+             << "        \"implementation_version\": \"1\",\n"
+             << "        \"description\": \"gnumon Linux PresentMon frame capture layer\",\n"
+             << "        \"functions\": {\n"
+             << "            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n"
+             << "        },\n"
+             << "        \"device_extensions\": [\n"
+             << "            {\n"
+             << "                \"name\": \"VK_KHR_swapchain\",\n"
+             << "                \"spec_version\": \"70\",\n"
+             << "                \"entrypoints\": [\n"
+             << "                    \"vkCreateSwapchainKHR\",\n"
+             << "                    \"vkDestroySwapchainKHR\",\n"
+             << "                    \"vkGetSwapchainImagesKHR\",\n"
+             << "                    \"vkAcquireNextImageKHR\",\n"
+             << "                    \"vkQueuePresentKHR\",\n"
+             << "                    \"vkAcquireNextImage2KHR\"\n"
+             << "                ]\n"
+             << "            }\n"
+             << "        ],\n"
+             << "        \"enable_environment\": {\n"
+             << "            \"ENABLE_GNUMON\": \"1\"\n"
+             << "        },\n"
+             << "        \"disable_environment\": {\n"
+             << "            \"DISABLE_GNUMON\": \"1\"\n"
+             << "        }\n"
+             << "    }\n"
+             << "}\n";
     }
 
     btnInstallLayer_->setText("Uninstall Layer");

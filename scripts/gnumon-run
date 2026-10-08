@@ -20,6 +20,9 @@ while [ $# -gt 0 ]; do
             echo "Example: gnumon-run vkcube"
             exit 0
             ;;
+        %command%)
+            shift
+            ;;
         *)
             break
             ;;
@@ -35,6 +38,19 @@ if [ $# -eq 0 ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Read user configuration from ~/.config/gnumon/config.ini if present
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/gnumon/config.ini"
+if [ -f "$CONFIG_FILE" ]; then
+    CFG_OVERLAY=$(grep -iE "^inGameHudEnabled\s*=" "$CONFIG_FILE" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' \r\t"')
+    if [ "$CFG_OVERLAY" = "true" ] || [ "$CFG_OVERLAY" = "1" ]; then
+        export GNUMON_OVERLAY="${GNUMON_OVERLAY:-1}"
+    fi
+    CFG_CORNER=$(grep -iE "^inGameHudCorner\s*=" "$CONFIG_FILE" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' \r\t"')
+    if [ -n "$CFG_CORNER" ]; then
+        export GNUMON_CORNER="${GNUMON_CORNER:-$CFG_CORNER}"
+    fi
+fi
 
 # Clean AppImage environment leaks from LD_LIBRARY_PATH and Qt variables before launching games
 if [ -n "$LD_LIBRARY_PATH" ]; then
@@ -59,12 +75,17 @@ export ENABLE_GNUMON=1
 export VK_INSTANCE_LAYERS="VK_LAYER_GNUMON_capture${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}"
 
 # Ensure user Vulkan layer directory is searched
-USER_VULKAN_DIR="$HOME/.local/share/vulkan/implicit_layer.d"
-if [ -d "$USER_VULKAN_DIR" ]; then
-    export VK_LAYER_PATH="$USER_VULKAN_DIR${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
-fi
+USER_IMPLICIT_DIR="$HOME/.local/share/vulkan/implicit_layer.d"
+USER_EXPLICIT_DIR="$HOME/.local/share/vulkan/explicit_layer.d"
+USER_LIB_DIR="$HOME/.local/lib/gnumon"
 
-if [ ! -f "$USER_VULKAN_DIR/VkLayer_gnumon.json" ] && [ ! -f "$HOME/.local/share/vulkan/explicit_layer.d/VkLayer_gnumon.json" ]; then
+for d in "$USER_IMPLICIT_DIR" "$USER_EXPLICIT_DIR" "$USER_LIB_DIR"; do
+    if [ -d "$d" ]; then
+        export VK_LAYER_PATH="$d${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
+    fi
+done
+
+if [ ! -f "$USER_IMPLICIT_DIR/VkLayer_gnumon.json" ] && [ ! -f "$USER_EXPLICIT_DIR/VkLayer_gnumon.json" ]; then
     echo "[gnumon-run] Note: Vulkan layer is not yet installed in ~/.local/share/vulkan." >&2
     echo "[gnumon-run] Launch gnumon GUI and click 'Install Layer' or run 'install-layers.sh'." >&2
 fi
