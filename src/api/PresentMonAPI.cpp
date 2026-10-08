@@ -734,6 +734,30 @@ PRESENTMON_API2_EXPORT PM_STATUS pmCheckRecordHotkeyTriggered(PM_SESSION_HANDLE 
     return PM_STATUS_SUCCESS;
 }
 
+PRESENTMON_API2_EXPORT PM_STATUS pmCheckInGameOverlayHotkeyTriggered(PM_SESSION_HANDLE handle, bool* pTriggered) {
+    if (!handle || !pTriggered) return PM_STATUS_BAD_HANDLE;
+    *pTriggered = handle->coordinator ? handle->coordinator->ConsumeInGameHudHotkeyToggle() : false;
+    return PM_STATUS_SUCCESS;
+}
+
+PRESENTMON_API2_EXPORT PM_STATUS pmCheckMiniHudHotkeyTriggered(PM_SESSION_HANDLE handle, bool* pTriggered) {
+    if (!handle || !pTriggered) return PM_STATUS_BAD_HANDLE;
+    *pTriggered = handle->coordinator ? handle->coordinator->ConsumeMiniHudHotkeyToggle() : false;
+    return PM_STATUS_SUCCESS;
+}
+
+PRESENTMON_API2_EXPORT PM_STATUS pmSetHotkeys(PM_SESSION_HANDLE handle, const char* inGameHud, const char* record, const char* overlay, const char* miniHud) {
+    if (!handle) return PM_STATUS_BAD_HANDLE;
+    if (handle->coordinator) {
+        handle->coordinator->SetHotkeys(inGameHud ? inGameHud : "",
+                                        record ? record : "",
+                                        overlay ? overlay : "",
+                                        miniHud ? miniHud : "");
+        return PM_STATUS_SUCCESS;
+    }
+    return PM_STATUS_SERVICE_ERROR;
+}
+
 PRESENTMON_API2_EXPORT PM_STATUS pmSetInGameOverlayState(PM_SESSION_HANDLE handle, bool enabled) {
     if (!handle) return PM_STATUS_BAD_HANDLE;
     if (handle->coordinator) {

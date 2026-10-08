@@ -263,12 +263,26 @@ bool TelemetryCoordinator::ConsumeHotkeyToggle() {
     return inputTracker_.ConsumeHotkeyToggle();
 }
 
+bool TelemetryCoordinator::ConsumeInGameHudHotkeyToggle() {
+    return inputTracker_.ConsumeInGameHudHotkeyToggle();
+}
+
 bool TelemetryCoordinator::ConsumeOverlayHotkeyToggle() {
     return inputTracker_.ConsumeOverlayHotkeyToggle();
 }
 
 bool TelemetryCoordinator::ConsumeRecordHotkeyToggle() {
     return inputTracker_.ConsumeRecordHotkeyToggle();
+}
+
+bool TelemetryCoordinator::ConsumeMiniHudHotkeyToggle() {
+    return inputTracker_.ConsumeMiniHudHotkeyToggle();
+}
+
+void TelemetryCoordinator::SetHotkeys(const std::string& inGameHud, const std::string& record,
+                                      const std::string& overlay, const std::string& miniHud)
+{
+    inputTracker_.SetHotkeys(inGameHud, record, overlay, miniHud);
 }
 
 void TelemetryCoordinator::SetInGameOverlayEnabled(bool enabled) {

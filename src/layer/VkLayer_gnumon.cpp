@@ -570,11 +570,88 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueueSubmit2(
 }
 #endif
 
+static void CheckInGameHotkeys(uint64_t nowNs) {
+    static uint64_t lastCheckNs = 0;
+    if (nowNs < lastCheckNs + 33'000'000) {
+        return; // Check at most once every 33 ms (~30 Hz)
+    }
+    lastCheckNs = nowNs;
+
+    typedef void* (*XOpenDisplay_fn)(const char*);
+    typedef int (*XQueryKeymap_fn)(void*, char[32]);
+    typedef unsigned char (*XKeysymToKeycode_fn)(void*, unsigned long);
+
+    static void* x11Lib = nullptr;
+    static XOpenDisplay_fn pXOpenDisplay = nullptr;
+    static XQueryKeymap_fn pXQueryKeymap = nullptr;
+    static XKeysymToKeycode_fn pXKeysymToKeycode = nullptr;
+    static void* dpy = nullptr;
+    static uint8_t kcF9 = 0;
+    static uint8_t kcF10 = 0;
+    static bool initDone = false;
+
+    if (!initDone) {
+        initDone = true;
+#if !defined(_WIN32)
+        x11Lib = dlopen("libX11.so.6", RTLD_LAZY);
+        if (!x11Lib) x11Lib = dlopen("libX11.so", RTLD_LAZY);
+        if (x11Lib) {
+            pXOpenDisplay = (XOpenDisplay_fn)dlsym(x11Lib, "XOpenDisplay");
+            pXQueryKeymap = (XQueryKeymap_fn)dlsym(x11Lib, "XQueryKeymap");
+            pXKeysymToKeycode = (XKeysymToKeycode_fn)dlsym(x11Lib, "XKeysymToKeycode");
+            if (pXOpenDisplay) {
+                dpy = pXOpenDisplay(nullptr);
+                if (dpy && pXKeysymToKeycode) {
+                    kcF9 = pXKeysymToKeycode(dpy, 0xffc6 /* XK_F9 */);
+                    kcF10 = pXKeysymToKeycode(dpy, 0xffc7 /* XK_F10 */);
+                }
+            }
+        }
+#endif
+    }
+
+    if (!dpy || !pXQueryKeymap) return;
+
+    char keys[32]{};
+    pXQueryKeymap(dpy, keys);
+
+    auto isDown = [&](uint8_t kc) -> bool {
+        if (kc == 0) return false;
+        return (keys[kc / 8] & (1 << (kc % 8))) != 0;
+    };
+
+    static bool wasF9 = false;
+    bool downF9 = isDown(kcF9);
+    if (downF9 && !wasF9) {
+        g_enableOverlay = !g_enableOverlay;
+        g_producer.SetOverlayEnabled(g_enableOverlay);
+        if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
+            fprintf(stderr, "[gnumon-layer] In-game hotkey F9 pressed! In-Game HUD: %s\n",
+                    g_enableOverlay ? "ON" : "OFF");
+        }
+    }
+    wasF9 = downF9;
+
+    static bool wasF10 = false;
+    bool downF10 = isDown(kcF10);
+    if (downF10 && !wasF10) {
+        bool newRec = !g_producer.IsRecordingActive();
+        g_producer.SetRecordingActive(newRec);
+        if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
+            fprintf(stderr, "[gnumon-layer] In-game hotkey F10 pressed! Capture: %s\n",
+                    newRec ? "STARTING" : "STOPPED");
+        }
+    }
+    wasF10 = downF10;
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
     VkQueue queue,
     const VkPresentInfoKHR* pPresentInfo)
 {
     uint64_t presentStartNs = gnumon::common::Clock::GetTimestampNs();
+    CheckInGameHotkeys(presentStartNs);
+
     bool overlayActive = g_enableOverlay || g_producer.IsOverlayEnabled();
     bool isRec = g_producer.IsRecordingActive();
 

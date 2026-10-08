@@ -21,8 +21,13 @@ public:
 
     // Global hotkey triggers
     bool ConsumeHotkeyToggle();
+    bool ConsumeInGameHudHotkeyToggle();
     bool ConsumeOverlayHotkeyToggle();
     bool ConsumeRecordHotkeyToggle();
+    bool ConsumeMiniHudHotkeyToggle();
+
+    void SetHotkeys(const std::string& inGameHud, const std::string& record,
+                    const std::string& overlay, const std::string& miniHud);
     void SetHotkeyKeycode(uint16_t code);
 
 private:
@@ -30,9 +35,21 @@ private:
 
     std::atomic<bool> running_{false};
     std::atomic<uint64_t> lastClickTimestampNs_{0};
+    std::atomic<bool> inGameHudToggleTriggered_{false};
     std::atomic<bool> overlayToggleTriggered_{false};
     std::atomic<bool> recordToggleTriggered_{false};
-    uint16_t targetKeycode_ = 68; // KEY_F10 (recording), KEY_F11 (overlay)
+    std::atomic<bool> miniHudToggleTriggered_{false};
+
+    uint16_t evdevInGameHud_ = 67; // KEY_F9
+    uint16_t evdevRecord_ = 68;    // KEY_F10
+    uint16_t evdevOverlay_ = 87;   // KEY_F11
+    uint16_t evdevMiniHud_ = 88;   // KEY_F12
+
+    std::string keyNameInGameHud_ = "F9";
+    std::string keyNameRecord_ = "F10";
+    std::string keyNameOverlay_ = "F11";
+    std::string keyNameMiniHud_ = "F12";
+
     std::thread workerThread_;
     std::vector<int> inputFds_;
 };

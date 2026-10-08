@@ -3,6 +3,8 @@ build-*/
 build-appimage/
 _CPack_Packages/
 *.tar.gz
+*.deb
+*.AppImage
 *.csv
 .cache/
 .vscode/

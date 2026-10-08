@@ -289,13 +289,21 @@ void MainWindow::OnConfigureMetrics() {
 void MainWindow::ApplyConfig() {
     ApplyMetricsConfig();
 
+    if (session_) {
+        pmSetHotkeys(session_,
+                     config_.hotkeyInGameHud.toUtf8().constData(),
+                     config_.hotkeyRecording.toUtf8().constData(),
+                     config_.hotkeyOverlay.toUtf8().constData(),
+                     config_.hotkeyMiniHud.toUtf8().constData());
+    }
+
     // 1. In-game HUD
     inGameOverlayActive_ = config_.inGameHudEnabled;
     if (session_) {
         pmSetInGameOverlayState(session_, inGameOverlayActive_);
     }
     if (btnInGameOverlay_) {
-        btnInGameOverlay_->setText(inGameOverlayActive_ ? "In-Game HUD: ON (F9)" : "In-Game HUD: OFF (F9)");
+        btnInGameOverlay_->setText(inGameOverlayActive_ ? "In-Game HUD: ON (" + config_.hotkeyInGameHud + ")" : "In-Game HUD: OFF (" + config_.hotkeyInGameHud + ")");
         btnInGameOverlay_->setStyleSheet(inGameOverlayActive_
             ? "background-color: #00838f; color: white; font-weight: bold;"
             : "");
@@ -579,6 +587,10 @@ void MainWindow::OnProcessChanged(int index) {
 
 void MainWindow::OnPollTimer() {
     if (session_) {
+        bool inGameHotkey = false;
+        if (pmCheckInGameOverlayHotkeyTriggered(session_, &inGameHotkey) == PM_STATUS_SUCCESS && inGameHotkey) {
+            OnToggleInGameOverlay();
+        }
         bool overlayHotkey = false;
         if (pmCheckOverlayHotkeyTriggered(session_, &overlayHotkey) == PM_STATUS_SUCCESS && overlayHotkey) {
             OnToggleOverlay();
@@ -586,6 +598,10 @@ void MainWindow::OnPollTimer() {
         bool recordHotkey = false;
         if (pmCheckRecordHotkeyTriggered(session_, &recordHotkey) == PM_STATUS_SUCCESS && recordHotkey) {
             OnToggleRecording();
+        }
+        bool miniHudHotkey = false;
+        if (pmCheckMiniHudHotkeyTriggered(session_, &miniHudHotkey) == PM_STATUS_SUCCESS && miniHudHotkey) {
+            OnToggleMiniOverlay();
         }
     }
 

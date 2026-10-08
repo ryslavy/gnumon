@@ -31,8 +31,12 @@ public:
     control::CpuMetrics GetLatestCpuMetrics() const;
     uint64_t GetLastClickTimestampNs() const;
     bool ConsumeHotkeyToggle();
+    bool ConsumeInGameHudHotkeyToggle();
     bool ConsumeOverlayHotkeyToggle();
     bool ConsumeRecordHotkeyToggle();
+    bool ConsumeMiniHudHotkeyToggle();
+    void SetHotkeys(const std::string& inGameHud, const std::string& record,
+                    const std::string& overlay, const std::string& miniHud);
 
     void SetInGameOverlayEnabled(bool enabled);
     bool IsInGameOverlayEnabled() const;
