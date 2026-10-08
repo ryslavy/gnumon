@@ -3,9 +3,33 @@
 
 set -e
 
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --overlay|--hud)
+            export GNUMON_OVERLAY=1
+            shift
+            ;;
+        --gl)
+            export GNUMON_GL=1
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: gnumon-run [--overlay|--hud] [--gl] <command> [args...]"
+            echo "Example for Steam: gnumon-run --overlay %command%"
+            echo "Example (env): GNUMON_OVERLAY=1 gnumon-run %command%"
+            echo "Example: gnumon-run vkcube"
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
 if [ $# -eq 0 ]; then
-    echo "Usage: gnumon-run <command> [args...]"
-    echo "Example for Steam: gnumon-run %command%"
+    echo "Usage: gnumon-run [--overlay|--hud] [--gl] <command> [args...]"
+    echo "Example for Steam: gnumon-run --overlay %command%"
+    echo "Example (env): GNUMON_OVERLAY=1 gnumon-run %command%"
     echo "Example: gnumon-run vkcube"
     exit 1
 fi
@@ -48,10 +72,7 @@ fi
 # OpenGL LD_PRELOAD handling:
 # Only activate for native OpenGL if explicitly requested via GNUMON_GL=1 or --gl
 # to avoid breaking Steam 32-bit wrappers or Proton container processes.
-if [ "${GNUMON_GL:-0}" = "1" ] || [ "$1" = "--gl" ]; then
-    if [ "$1" = "--gl" ]; then
-        shift
-    fi
+if [ "${GNUMON_GL:-0}" = "1" ]; then
     LIB_GL=""
     for p in "$HOME/.local/lib/gnumon" "/usr/local/lib" "/usr/lib" "$SCRIPT_DIR" "$SCRIPT_DIR/../build-host"; do
         if [ -f "$p/libgnumon_gl.so" ]; then
