@@ -89,15 +89,57 @@ bool TelemetryCoordinator::GetLatestFrame(ipc::FrameEvent& outEvent) {
 
     ipc::FrameEvent event{};
     bool hasNew = false;
+
+    auto recordFrame = [&](const ipc::FrameEvent& f) {
+        if (latestFrame_.frameId > 0) {
+            prevFrame_ = latestFrame_;
+        }
+        latestFrame_ = f;
+
+        if (f.frameTimeNs > 0) {
+            double fps = 1'000'000'000.0 / static_cast<double>(f.frameTimeNs);
+            double ftMs = static_cast<double>(f.frameTimeNs) / 1'000'000.0;
+            fpsHistory_.Push(f.presentStartTimestampNs, fps);
+            frameTimeHistory_.Push(f.presentStartTimestampNs, ftMs);
+        }
+
+        // Displayed FPS (tracking non-dropped frames)
+        if (f.dropped == 0) {
+            double dispFps = 0.0;
+            if (prevFrame_.displayTimestampNs > 0 && f.displayTimestampNs > prevFrame_.displayTimestampNs) {
+                uint64_t dispDeltaNs = f.displayTimestampNs - prevFrame_.displayTimestampNs;
+                dispFps = 1'000'000'000.0 / static_cast<double>(dispDeltaNs);
+            } else if (f.frameTimeNs > 0) {
+                dispFps = 1'000'000'000.0 / static_cast<double>(f.frameTimeNs);
+            }
+            if (dispFps > 0.0) {
+                displayedFpsHistory_.Push(f.displayTimestampNs, dispFps);
+            }
+        }
+
+        // PC / Render-to-Display Latency
+        if (f.displayTimestampNs >= f.cpuStartTimestampNs && f.cpuStartTimestampNs > 0) {
+            double latMs = static_cast<double>(f.displayTimestampNs - f.cpuStartTimestampNs) / 1'000'000.0;
+            latencyHistory_.Push(f.displayTimestampNs, latMs);
+        } else if (f.gpuDurationNs > 0) {
+            double latMs = static_cast<double>(f.gpuDurationNs + f.presentDurationNs) / 1'000'000.0;
+            latencyHistory_.Push(f.presentStartTimestampNs, latMs);
+        }
+
+        // Animation Error: |delta(display) - delta(app/simulation)| in ms
+        if (prevFrame_.frameId > 0 && f.displayTimestampNs > prevFrame_.displayTimestampNs) {
+            double deltaDispMs = static_cast<double>(f.displayTimestampNs - prevFrame_.displayTimestampNs) / 1'000'000.0;
+            double deltaAppMs = (f.cpuStartTimestampNs > prevFrame_.cpuStartTimestampNs && prevFrame_.cpuStartTimestampNs > 0)
+                ? (static_cast<double>(f.cpuStartTimestampNs - prevFrame_.cpuStartTimestampNs) / 1'000'000.0)
+                : (static_cast<double>(f.frameTimeNs) / 1'000'000.0);
+            double animErrMs = std::abs(deltaDispMs - deltaAppMs);
+            animErrorHistory_.Push(f.displayTimestampNs, animErrMs);
+        }
+    };
+
     // Drain to latest frame
     while (frameConsumer_.Pop(event)) {
-        latestFrame_ = event;
-        if (event.frameTimeNs > 0) {
-            double fps = 1'000'000'000.0 / static_cast<double>(event.frameTimeNs);
-            double ftMs = static_cast<double>(event.frameTimeNs) / 1'000'000.0;
-            fpsHistory_.Push(event.presentStartTimestampNs, fps);
-            frameTimeHistory_.Push(event.presentStartTimestampNs, ftMs);
-        }
+        recordFrame(event);
         hasNew = true;
     }
 
@@ -115,6 +157,9 @@ bool TelemetryCoordinator::PopFrame(ipc::FrameEvent& outEvent) {
     }
 
     if (frameConsumer_.Pop(outEvent)) {
+        if (latestFrame_.frameId > 0) {
+            prevFrame_ = latestFrame_;
+        }
         latestFrame_ = outEvent;
         if (outEvent.frameTimeNs > 0) {
             double fps = 1'000'000'000.0 / static_cast<double>(outEvent.frameTimeNs);
@@ -135,13 +180,22 @@ double TelemetryCoordinator::GetStatisticalMetric(PM_METRIC metric, PM_STAT stat
     uint64_t cutoffNs = (nowNs > windowNs) ? (nowNs - windowNs) : 0;
 
     fpsHistory_.PruneOlderThan(cutoffNs);
+    displayedFpsHistory_.PruneOlderThan(cutoffNs);
     frameTimeHistory_.PruneOlderThan(cutoffNs);
+    latencyHistory_.PruneOlderThan(cutoffNs);
+    animErrorHistory_.PruneOlderThan(cutoffNs);
 
     const common::SlidingStatistics* targetStats = nullptr;
-    if (metric == PM_METRIC_DISPLAYED_FPS || metric == PM_METRIC_PRESENTED_FPS || metric == PM_METRIC_APPLICATION_FPS) {
+    if (metric == PM_METRIC_DISPLAYED_FPS) {
+        targetStats = &displayedFpsHistory_;
+    } else if (metric == PM_METRIC_PRESENTED_FPS || metric == PM_METRIC_APPLICATION_FPS) {
         targetStats = &fpsHistory_;
     } else if (metric == PM_METRIC_CPU_FRAME_TIME || metric == PM_METRIC_DISPLAYED_FRAME_TIME || metric == PM_METRIC_PRESENTED_FRAME_TIME) {
         targetStats = &frameTimeHistory_;
+    } else if (metric == PM_METRIC_DISPLAY_LATENCY || metric == PM_METRIC_PC_LATENCY || metric == PM_METRIC_RENDER_PRESENT_LATENCY || metric == PM_METRIC_UNTIL_DISPLAYED) {
+        targetStats = &latencyHistory_;
+    } else if (metric == PM_METRIC_ANIMATION_ERROR) {
+        targetStats = &animErrorHistory_;
     }
 
     if (!targetStats || targetStats->IsEmpty()) {

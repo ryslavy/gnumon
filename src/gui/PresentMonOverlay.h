@@ -49,8 +49,12 @@ private:
     QTimer *pollTimer_ = nullptr;
 
     // Metric values
+    double presentFps_ = 0.0;
     double displayedFps_ = 0.0;
+    double fps1PercentLow_ = 0.0;
     double frameTimeMs_ = 0.0;
+    double latencyMs_ = 0.0;
+    double animErrorMs_ = 0.0;
     double gpuTimeMs_ = 0.0;
     double gpuWaitMs_ = 0.0;
 

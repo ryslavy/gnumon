@@ -328,11 +328,29 @@ PRESENTMON_API2_EXPORT PM_STATUS pmPollDynamicQuery(
                 }
                 break;
             case PM_METRIC_DISPLAY_LATENCY:
+            case PM_METRIC_PC_LATENCY:
+            case PM_METRIC_RENDER_PRESENT_LATENCY:
                 if (elem.dataSize >= sizeof(double)) {
-                    double dispLatMs = (hasFrame && frame.displayTimestampNs >= frame.cpuStartTimestampNs && frame.cpuStartTimestampNs > 0)
-                        ? (static_cast<double>(frame.displayTimestampNs - frame.cpuStartTimestampNs) / 1'000'000.0)
-                        : 0.0;
+                    double dispLatMs = 0.0;
+                    if (elem.stat != PM_STAT_NONE) {
+                        dispLatMs = coordinator ? coordinator->GetStatisticalMetric(elem.metric, elem.stat, handle->windowSizeMs) : 0.0;
+                    } else if (hasFrame && frame.displayTimestampNs >= frame.cpuStartTimestampNs && frame.cpuStartTimestampNs > 0) {
+                        dispLatMs = static_cast<double>(frame.displayTimestampNs - frame.cpuStartTimestampNs) / 1'000'000.0;
+                    } else if (hasFrame && frame.gpuDurationNs > 0) {
+                        dispLatMs = static_cast<double>(frame.gpuDurationNs + frame.presentDurationNs) / 1'000'000.0;
+                    }
                     *reinterpret_cast<double*>(dest) = dispLatMs;
+                }
+                break;
+            case PM_METRIC_ANIMATION_ERROR:
+                if (elem.dataSize >= sizeof(double)) {
+                    double animErr = 0.0;
+                    if (elem.stat != PM_STAT_NONE) {
+                        animErr = coordinator ? coordinator->GetStatisticalMetric(elem.metric, elem.stat, handle->windowSizeMs) : 0.0;
+                    } else {
+                        animErr = coordinator ? coordinator->GetStatisticalMetric(elem.metric, PM_STAT_AVG, handle->windowSizeMs) : 0.0;
+                    }
+                    *reinterpret_cast<double*>(dest) = animErr;
                 }
                 break;
             case PM_METRIC_CLICK_TO_PHOTON_LATENCY:

@@ -2,11 +2,14 @@
 #include <vulkan/vk_layer.h>
 #include "../ipc/FrameRingBuffer.h"
 #include "../common/Clock.h"
+#include "VulkanOverlayRenderer.h"
 
 #include <unordered_map>
 #include <mutex>
 #include <cstring>
 #include <iostream>
+#include <deque>
+#include <algorithm>
 
 #ifndef VK_LAYER_EXPORT
 #define VK_LAYER_EXPORT extern "C" __attribute__((visibility("default")))
@@ -31,11 +34,36 @@ struct DeviceDispatch {
 #ifdef VK_VERSION_1_3
     PFN_vkQueueSubmit2 queueSubmit2 = nullptr;
 #endif
+    PFN_vkCreateSwapchainKHR createSwapchainKHR = nullptr;
+    PFN_vkDestroySwapchainKHR destroySwapchainKHR = nullptr;
+    PFN_vkGetSwapchainImagesKHR getSwapchainImagesKHR = nullptr;
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    PFN_vkGetInstanceProcAddr getInstProcAddr = nullptr;
+};
+
+struct SwapchainInfo {
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    VkDevice device = VK_NULL_HANDLE;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkExtent2D extent{0, 0};
+    std::vector<VkImage> images;
 };
 
 std::mutex g_dispatchMutex;
 std::unordered_map<void*, InstanceDispatch> g_instanceDispatch;
 std::unordered_map<void*, DeviceDispatch> g_deviceDispatch;
+
+std::mutex g_swapchainMutex;
+std::unordered_map<VkSwapchainKHR, SwapchainInfo> g_swapchains;
+gnumon::layer::VulkanOverlayRenderer g_overlayRenderer;
+
+struct HudHistory {
+    std::deque<double> fps;
+    uint64_t lastDisplayNs = 0;
+    uint64_t lastCpuStartNs = 0;
+};
+HudHistory g_hudHistory;
+std::mutex g_hudMutex;
 
 gnumon::ipc::FrameRingProducer g_producer;
 std::atomic<uint32_t> g_frameId{0};
@@ -159,6 +187,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateDevice(
             disp.queueSubmit2 = reinterpret_cast<PFN_vkQueueSubmit2>(nextGDPA(*pDevice, "vkQueueSubmit2KHR"));
         }
 #endif
+        disp.createSwapchainKHR = reinterpret_cast<PFN_vkCreateSwapchainKHR>(nextGDPA(*pDevice, "vkCreateSwapchainKHR"));
+        disp.destroySwapchainKHR = reinterpret_cast<PFN_vkDestroySwapchainKHR>(nextGDPA(*pDevice, "vkDestroySwapchainKHR"));
+        disp.getSwapchainImagesKHR = reinterpret_cast<PFN_vkGetSwapchainImagesKHR>(nextGDPA(*pDevice, "vkGetSwapchainImagesKHR"));
+        disp.physicalDevice = physicalDevice;
+        disp.getInstProcAddr = nextGIPA;
         g_deviceDispatch[GetDispatchKey(*pDevice)] = disp;
     }
 
@@ -181,6 +214,86 @@ static VKAPI_ATTR void VKAPI_CALL gnumon_vkDestroyDevice(
 
     if (destroyDevice) {
         destroyDevice(device, pAllocator);
+    }
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateSwapchainKHR(
+    VkDevice device,
+    const VkSwapchainCreateInfoKHR* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkSwapchainKHR* pSwapchain)
+{
+    VkSwapchainCreateInfoKHR createInfo = *pCreateInfo;
+    // Add transfer destination usage so HUD overlay can be copied to swapchain image
+    createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+    PFN_vkCreateSwapchainKHR nextFunc = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_dispatchMutex);
+        auto it = g_deviceDispatch.find(GetDispatchKey(device));
+        if (it != g_deviceDispatch.end()) {
+            nextFunc = it->second.createSwapchainKHR;
+        }
+    }
+
+    VkResult res = VK_ERROR_INITIALIZATION_FAILED;
+    if (nextFunc) {
+        res = nextFunc(device, &createInfo, pAllocator, pSwapchain);
+        if (res != VK_SUCCESS) {
+            // Fallback to original createInfo if driver rejected TRANSFER_DST_BIT
+            res = nextFunc(device, pCreateInfo, pAllocator, pSwapchain);
+        }
+    }
+
+    if (res == VK_SUCCESS && pSwapchain && *pSwapchain) {
+        std::lock_guard<std::mutex> lock(g_swapchainMutex);
+        SwapchainInfo info{};
+        info.swapchain = *pSwapchain;
+        info.device = device;
+        info.format = pCreateInfo->imageFormat;
+        info.extent = pCreateInfo->imageExtent;
+
+        PFN_vkGetSwapchainImagesKHR getImages = nullptr;
+        {
+            std::lock_guard<std::mutex> dlock(g_dispatchMutex);
+            auto it = g_deviceDispatch.find(GetDispatchKey(device));
+            if (it != g_deviceDispatch.end()) {
+                getImages = it->second.getSwapchainImagesKHR;
+            }
+        }
+        if (getImages) {
+            uint32_t count = 0;
+            if (getImages(device, *pSwapchain, &count, nullptr) == VK_SUCCESS && count > 0) {
+                info.images.resize(count);
+                getImages(device, *pSwapchain, &count, info.images.data());
+            }
+        }
+        g_swapchains[*pSwapchain] = info;
+    }
+    return res;
+}
+
+static VKAPI_ATTR void VKAPI_CALL gnumon_vkDestroySwapchainKHR(
+    VkDevice device,
+    VkSwapchainKHR swapchain,
+    const VkAllocationCallbacks* pAllocator)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_swapchainMutex);
+        g_swapchains.erase(swapchain);
+    }
+
+    PFN_vkDestroySwapchainKHR nextFunc = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_dispatchMutex);
+        auto it = g_deviceDispatch.find(GetDispatchKey(device));
+        if (it != g_deviceDispatch.end()) {
+            nextFunc = it->second.destroySwapchainKHR;
+        }
+    }
+
+    if (nextFunc) {
+        nextFunc(device, swapchain, pAllocator);
     }
 }
 
@@ -300,6 +413,78 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
     const VkPresentInfoKHR* pPresentInfo)
 {
     uint64_t presentStartNs = gnumon::common::Clock::GetTimestampNs();
+    bool overlayActive = g_enableOverlay || g_producer.IsOverlayEnabled();
+    bool isRec = g_producer.IsRecordingActive();
+
+    // Render In-Game HUD into swapchain image before presenting
+    if (overlayActive && pPresentInfo && pPresentInfo->swapchainCount > 0) {
+        VkSwapchainKHR sc = pPresentInfo->pSwapchains[0];
+        uint32_t imgIdx = (pPresentInfo->pImageIndices) ? pPresentInfo->pImageIndices[0] : 0;
+
+        VkDevice dev = VK_NULL_HANDLE;
+        VkFormat fmt = VK_FORMAT_B8G8R8A8_UNORM;
+        VkImage img = VK_NULL_HANDLE;
+        {
+            std::lock_guard<std::mutex> slock(g_swapchainMutex);
+            auto it = g_swapchains.find(sc);
+            if (it != g_swapchains.end()) {
+                dev = it->second.device;
+                fmt = it->second.format;
+                if (imgIdx < it->second.images.size()) {
+                    img = it->second.images[imgIdx];
+                }
+            }
+        }
+
+        if (dev && img) {
+            if (!g_overlayRenderer.IsInitialized()) {
+                std::lock_guard<std::mutex> dlock(g_dispatchMutex);
+                auto dit = g_deviceDispatch.find(GetDispatchKey(dev));
+                if (dit != g_deviceDispatch.end()) {
+                    g_overlayRenderer.Initialize(dev, dit->second.physicalDevice, 0,
+                                                 dit->second.getProcAddr,
+                                                 dit->second.getInstProcAddr, VK_NULL_HANDLE);
+                }
+            }
+
+            if (g_overlayRenderer.IsInitialized()) {
+                double presentFps = 0.0;
+                double ftMs = 0.0;
+                double lowFps = 0.0;
+                double dispFps = 0.0;
+                double animErrMs = 0.0;
+                double latMs = 0.0;
+
+                {
+                    std::lock_guard<std::mutex> hlock(g_hudMutex);
+                    if (!g_hudHistory.fps.empty()) {
+                        presentFps = g_hudHistory.fps.back();
+                        ftMs = (presentFps > 0) ? (1000.0 / presentFps) : 0.0;
+                        std::vector<double> sorted = {g_hudHistory.fps.begin(), g_hudHistory.fps.end()};
+                        std::sort(sorted.begin(), sorted.end());
+                        size_t idx = static_cast<size_t>(std::floor(sorted.size() * 0.01));
+                        lowFps = sorted[std::min(idx, sorted.size() - 1)];
+                    }
+                    dispFps = presentFps;
+                    if (g_hudHistory.lastDisplayNs > 0 && presentStartNs > g_hudHistory.lastDisplayNs) {
+                        uint64_t deltaDispNs = presentStartNs - g_hudHistory.lastDisplayNs;
+                        dispFps = 1'000'000'000.0 / static_cast<double>(deltaDispNs);
+                        uint64_t deltaAppNs = (g_currentCpuStartNs > g_hudHistory.lastCpuStartNs && g_hudHistory.lastCpuStartNs > 0)
+                            ? (g_currentCpuStartNs - g_hudHistory.lastCpuStartNs)
+                            : deltaDispNs;
+                        animErrMs = std::abs(static_cast<double>(deltaDispNs) - static_cast<double>(deltaAppNs)) / 1'000'000.0;
+                    }
+                    latMs = (g_currentCpuStartNs > 0 && presentStartNs > g_currentCpuStartNs)
+                        ? (static_cast<double>(presentStartNs - g_currentCpuStartNs) / 1'000'000.0)
+                        : ftMs;
+                }
+
+                g_overlayRenderer.RenderHud(queue, img, fmt,
+                                            presentFps, dispFps, lowFps,
+                                            ftMs, latMs, animErrMs, isRec);
+            }
+        }
+    }
 
     PFN_vkQueuePresentKHR nextFunc = nullptr;
     {
@@ -320,6 +505,19 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
     uint64_t presentEndNs = gnumon::common::Clock::GetTimestampNs();
     uint64_t lastStart = g_lastPresentStartNs.exchange(presentStartNs, std::memory_order_acq_rel);
     uint64_t frameTimeNs = (lastStart > 0 && presentStartNs > lastStart) ? (presentStartNs - lastStart) : 0;
+    double currentFps = (frameTimeNs > 0) ? (1'000'000'000.0 / static_cast<double>(frameTimeNs)) : 0.0;
+
+    {
+        std::lock_guard<std::mutex> hlock(g_hudMutex);
+        if (currentFps > 0.0) {
+            g_hudHistory.fps.push_back(currentFps);
+            if (g_hudHistory.fps.size() > 120) {
+                g_hudHistory.fps.pop_front();
+            }
+        }
+        g_hudHistory.lastDisplayNs = presentEndNs;
+        g_hudHistory.lastCpuStartNs = g_currentCpuStartNs;
+    }
 
     uint64_t gpuStart = g_currentGpuSubmitStartNs.exchange(0, std::memory_order_acq_rel);
     if (gpuStart == 0) {
@@ -366,22 +564,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
     }
     event.frameType = fType;
 
-    bool overlayActive = g_enableOverlay || g_producer.IsOverlayEnabled();
-    bool isRec = g_producer.IsRecordingActive();
-
-    if (overlayActive && (event.frameId % 60 == 0)) {
-        double fps = (frameTimeNs > 0) ? (1'000'000'000.0 / static_cast<double>(frameTimeNs)) : 0.0;
-        double ftMs = static_cast<double>(frameTimeNs) / 1'000'000.0;
-        double gpuMs = static_cast<double>(gpuDuration) / 1'000'000.0;
-        std::cerr << "[gnumon overlay]"
-                  << (isRec ? " [● REC]" : "")
-                  << " FPS: " << static_cast<int>(fps)
-                  << " | FT: " << ftMs << " ms"
-                  << " | GPU: " << gpuMs << " ms"
-                  << " | Type: " << (fType == 100 ? "AMD AFMF" : (fType == 50 ? "Intel XeFG" : (fType == 3 ? "Repeated" : "App")))
-                  << std::endl;
-    }
-
     g_producer.Push(event);
 
     return result;
@@ -399,6 +581,10 @@ VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL gnumon_vkGetDeviceProcA
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkDestroyDevice);
     if (std::strcmp(pName, "vkQueuePresentKHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkQueuePresentKHR);
+    if (std::strcmp(pName, "vkCreateSwapchainKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkCreateSwapchainKHR);
+    if (std::strcmp(pName, "vkDestroySwapchainKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkDestroySwapchainKHR);
     if (std::strcmp(pName, "vkAcquireNextImageKHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkAcquireNextImageKHR);
     if (std::strcmp(pName, "vkAcquireNextImage2KHR") == 0)
@@ -441,6 +627,10 @@ VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL gnumon_vkGetInstancePro
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkGetDeviceProcAddr);
     if (std::strcmp(pName, "vkQueuePresentKHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkQueuePresentKHR);
+    if (std::strcmp(pName, "vkCreateSwapchainKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkCreateSwapchainKHR);
+    if (std::strcmp(pName, "vkDestroySwapchainKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkDestroySwapchainKHR);
     if (std::strcmp(pName, "vkAcquireNextImageKHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkAcquireNextImageKHR);
     if (std::strcmp(pName, "vkAcquireNextImage2KHR") == 0)

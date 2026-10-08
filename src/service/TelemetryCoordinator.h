@@ -45,8 +45,12 @@ private:
     control::GpuMetrics latestGpuMetrics_{};
     control::CpuMetrics latestCpuMetrics_{};
     ipc::FrameEvent latestFrame_{};
+    ipc::FrameEvent prevFrame_{};
     common::SlidingStatistics fpsHistory_;
+    common::SlidingStatistics displayedFpsHistory_;
     common::SlidingStatistics frameTimeHistory_;
+    common::SlidingStatistics latencyHistory_;
+    common::SlidingStatistics animErrorHistory_;
 };
 
 } // namespace gnumon::service

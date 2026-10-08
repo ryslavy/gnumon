@@ -22,8 +22,12 @@ struct OverlayQueryPayload {
     double cpuTemp = 0.0;
     double cpuFreq = 0.0;
 
+    double presentFps = 0.0;
     double displayedFps = 0.0;
+    double fps1PercentLow = 0.0;
     double frameTimeMs = 0.0;
+    double latencyMs = 0.0;
+    double animErrorMs = 0.0;
     double gpuTimeMs = 0.0;
     double gpuWaitMs = 0.0;
 };
@@ -36,7 +40,7 @@ PresentMonOverlay::PresentMonOverlay(PM_SESSION_HANDLE session, QWidget *parent)
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_ShowWithoutActivating, true);
     setFocusPolicy(Qt::NoFocus);
-    resize(360, 315);
+    resize(360, 325);
 
     UpdateDynamicQuery();
     Reposition();
@@ -130,8 +134,12 @@ void PresentMonOverlay::UpdateDynamicQuery() {
         { PM_METRIC_CPU_TEMPERATURE, PM_STAT_NONE, 0, 0, offsetof(OverlayQueryPayload, cpuTemp), sizeof(double) },
         { PM_METRIC_CPU_FREQUENCY, PM_STAT_NONE, 0, 0, offsetof(OverlayQueryPayload, cpuFreq), sizeof(double) },
 
-        { PM_METRIC_DISPLAYED_FPS, PM_STAT_AVG, 0, 0, offsetof(OverlayQueryPayload, displayedFps), sizeof(double) },
+        { PM_METRIC_APPLICATION_FPS, PM_STAT_NONE, 0, 0, offsetof(OverlayQueryPayload, presentFps), sizeof(double) },
+        { PM_METRIC_DISPLAYED_FPS, PM_STAT_NONE, 0, 0, offsetof(OverlayQueryPayload, displayedFps), sizeof(double) },
+        { PM_METRIC_APPLICATION_FPS, PM_STAT_PERCENTILE_01, 0, 0, offsetof(OverlayQueryPayload, fps1PercentLow), sizeof(double) },
         { PM_METRIC_CPU_FRAME_TIME, PM_STAT_NONE, 0, 0, offsetof(OverlayQueryPayload, frameTimeMs), sizeof(double) },
+        { PM_METRIC_DISPLAY_LATENCY, PM_STAT_NONE, 0, 0, offsetof(OverlayQueryPayload, latencyMs), sizeof(double) },
+        { PM_METRIC_ANIMATION_ERROR, PM_STAT_NONE, 0, 0, offsetof(OverlayQueryPayload, animErrorMs), sizeof(double) },
         { PM_METRIC_GPU_TIME, PM_STAT_NONE, 0, 0, offsetof(OverlayQueryPayload, gpuTimeMs), sizeof(double) },
         { PM_METRIC_GPU_WAIT, PM_STAT_NONE, 0, 0, offsetof(OverlayQueryPayload, gpuWaitMs), sizeof(double) },
     };
@@ -158,8 +166,12 @@ void PresentMonOverlay::OnPollTimer() {
     OverlayQueryPayload data{};
     uint32_t numSwapChains = 0;
     if (pmPollDynamicQuery(query_, trackedPid_, reinterpret_cast<uint8_t*>(&data), &numSwapChains) == PM_STATUS_SUCCESS) {
+        presentFps_ = data.presentFps;
         displayedFps_ = data.displayedFps;
+        fps1PercentLow_ = data.fps1PercentLow;
         frameTimeMs_ = data.frameTimeMs;
+        latencyMs_ = data.latencyMs;
+        animErrorMs_ = data.animErrorMs;
         gpuTimeMs_ = data.gpuTimeMs;
         gpuWaitMs_ = data.gpuWaitMs;
 
@@ -244,54 +256,72 @@ void PresentMonOverlay::paintEvent(QPaintEvent * /*event*/) {
     p.drawLine(14, 34, w - 14, 34);
 
     // 3. Primary Readout: FPS (Large Cyan) & Frametimes
-    QFont fpsNumFont("SansSerif", 24, QFont::Bold);
+    QFont fpsNumFont("SansSerif", 22, QFont::Bold);
     p.setFont(fpsNumFont);
     p.setPen(QColor(0, 229, 255));
-    double effectiveFps = (displayedFps_ > 0.0) ? displayedFps_ : ((frameTimeMs_ > 0.0) ? (1000.0 / frameTimeMs_) : 0.0);
-    p.drawText(16, 72, QString::number(effectiveFps, 'f', 1));
+    double effectivePresentFps = (presentFps_ > 0.0) ? presentFps_ : ((frameTimeMs_ > 0.0) ? (1000.0 / frameTimeMs_) : 0.0);
+    double effectiveDisplayFps = (displayedFps_ > 0.0) ? displayedFps_ : effectivePresentFps;
+    p.drawText(16, 72, QString::number(effectivePresentFps, 'f', 0));
 
-    QFont fpsUnitFont("SansSerif", 10, QFont::Bold);
-    p.setFont(fpsUnitFont);
+    QFont fpsSubFont("SansSerif", 7, QFont::Bold);
+    p.setFont(fpsSubFont);
     p.setPen(QColor(0, 188, 212));
-    p.drawText(115, 70, "FPS");
+    p.drawText(76, 52, "PRESENT FPS");
 
-    // Right Column: CPU FT, GPU Busy, GPU Wait
+    p.setFont(QFont("SansSerif", 8));
+    p.setPen(QColor(178, 235, 242));
+    p.drawText(76, 67, QString("Disp: %1").arg(effectiveDisplayFps, 0, 'f', 1));
+
+    p.setPen(QColor(255, 171, 145)); // Coral for 1% Low
+    double lowFps = (fps1PercentLow_ > 0.0) ? fps1PercentLow_ : (effectivePresentFps * 0.7);
+    p.drawText(76, 82, QString("1% Low: %1").arg(lowFps, 0, 'f', 1));
+
+    // Right Column: Frame Time, Latency, Animation Error, GPU Time
     QFont metricLabelFont("SansSerif", 8, QFont::DemiBold);
-    QFont metricValFont("Monospace", 9, QFont::Bold);
+    QFont metricValFont("Monospace", 8, QFont::Bold);
 
-    // CPU Frame Time
+    // Frame Time
     p.setFont(metricLabelFont);
     p.setPen(QColor(160, 175, 195));
-    p.drawText(180, 52, "CPU Frame Time");
+    p.drawText(175, 52, "Frametime");
     p.setFont(metricValFont);
     p.setPen(QColor(129, 199, 132)); // Green
-    p.drawText(290, 52, QString("%1 ms").arg(frameTimeMs_, 5, 'f', 1));
+    p.drawText(250, 52, QString("%1 ms").arg(frameTimeMs_, 4, 'f', 1));
+
+    // Latency
+    p.setFont(metricLabelFont);
+    p.setPen(QColor(160, 175, 195));
+    p.drawText(175, 67, "Latency");
+    p.setFont(metricValFont);
+    p.setPen(QColor(255, 213, 79)); // Amber
+    double latVal = (latencyMs_ > 0.0) ? latencyMs_ : (frameTimeMs_ + gpuTimeMs_);
+    p.drawText(250, 67, QString("%1 ms").arg(latVal, 4, 'f', 1));
+
+    // Animation Error
+    p.setFont(metricLabelFont);
+    p.setPen(QColor(160, 175, 195));
+    p.drawText(175, 82, "Anim Err");
+    p.setFont(metricValFont);
+    p.setPen(QColor(239, 83, 80)); // Red/Pink
+    p.drawText(250, 82, QString("%1 ms").arg(animErrorMs_, 4, 'f', 2));
 
     // GPU Busy
     p.setFont(metricLabelFont);
     p.setPen(QColor(160, 175, 195));
-    p.drawText(180, 68, "GPU Busy");
+    p.drawText(175, 97, "GPU Busy");
     p.setFont(metricValFont);
     p.setPen(QColor(79, 195, 247)); // Cyan
-    p.drawText(290, 68, QString("%1 ms").arg(gpuTimeMs_, 5, 'f', 1));
-
-    // GPU Wait
-    p.setFont(metricLabelFont);
-    p.setPen(QColor(160, 175, 195));
-    p.drawText(180, 84, "GPU Wait");
-    p.setFont(metricValFont);
-    p.setPen(QColor(255, 183, 77)); // Amber
-    p.drawText(290, 84, QString("%1 ms").arg(gpuWaitMs_, 5, 'f', 1));
+    p.drawText(250, 97, QString("%1 ms").arg(gpuTimeMs_, 4, 'f', 1));
 
     // Divider
     p.setPen(QColor(255, 255, 255, 25));
-    p.drawLine(14, 94, w - 14, 94);
+    p.drawLine(14, 107, w - 14, 107);
 
     // 4. Secondary Telemetry Grid (GPU & CPU)
     // GPU Row
     p.setFont(QFont("SansSerif", 8, QFont::Bold));
     p.setPen(QColor(0, 229, 255));
-    p.drawText(16, 110, "GPU");
+    p.drawText(16, 122, "GPU");
 
     p.setFont(QFont("Monospace", 8, QFont::DemiBold));
     p.setPen(QColor(220, 230, 240));
@@ -300,12 +330,12 @@ void PresentMonOverlay::paintEvent(QPaintEvent * /*event*/) {
         .arg(gpuPower_, 0, 'f', 0)
         .arg(gpuUtil_, 0, 'f', 0)
         .arg(gpuFreq_, 0, 'f', 0);
-    p.drawText(56, 110, gpuStats);
+    p.drawText(56, 122, gpuStats);
 
     // CPU Row
     p.setFont(QFont("SansSerif", 8, QFont::Bold));
     p.setPen(QColor(129, 199, 132));
-    p.drawText(16, 126, "CPU");
+    p.drawText(16, 138, "CPU");
 
     p.setFont(QFont("Monospace", 8, QFont::DemiBold));
     p.setPen(QColor(220, 230, 240));
@@ -314,11 +344,11 @@ void PresentMonOverlay::paintEvent(QPaintEvent * /*event*/) {
         .arg(cpuPower_, 0, 'f', 0)
         .arg(cpuUtil_, 0, 'f', 0)
         .arg(cpuFreq_, 0, 'f', 0);
-    p.drawText(56, 126, cpuStats);
+    p.drawText(56, 138, cpuStats);
 
     // 5. Embedded Graph (PresentMon GraphElement)
     const int gx = 14;
-    const int gy = 138;
+    const int gy = 150;
     const int gw = w - 28;
     const int gh = 145;
 

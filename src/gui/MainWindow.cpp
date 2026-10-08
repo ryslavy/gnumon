@@ -9,6 +9,7 @@
 #include <QStandardPaths>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QProcess>
 #include <filesystem>
 #include <vector>
 #include <fstream>
@@ -604,7 +605,37 @@ QString MainWindow::GetCapturesDirectory() const {
 
 void MainWindow::OnOpenCapturesFolder() {
     QString dir = GetCapturesDirectory();
-    QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    QDir().mkpath(dir);
+
+    // Host desktop file managers (Dolphin, Nautilus, etc.) crash if they inherit
+    // AppImage's bundled Qt6 libraries and LD_LIBRARY_PATH.
+    // Launch detached xdg-open with sanitized host environment.
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QString ld = env.value("LD_LIBRARY_PATH");
+    QString appDir = env.value("APPDIR");
+    if (!ld.isEmpty()) {
+        QStringList kept;
+        for (const QString& part : ld.split(':')) {
+            if (!appDir.isEmpty() && part.startsWith(appDir)) continue;
+            if (part.contains(".mount_") || part.contains("build-appimage/AppDir")) continue;
+            kept << part;
+        }
+        if (kept.isEmpty()) {
+            env.remove("LD_LIBRARY_PATH");
+        } else {
+            env.insert("LD_LIBRARY_PATH", kept.join(':'));
+        }
+    }
+    env.remove("QT_PLUGIN_PATH");
+    env.remove("QT_QPA_PLATFORM_PLUGIN_PATH");
+
+    QProcess proc;
+    proc.setProcessEnvironment(env);
+    proc.setProgram("xdg-open");
+    proc.setArguments(QStringList() << dir);
+    if (!proc.startDetached()) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    }
 }
 
 void MainWindow::OnToggleRecording() {
