@@ -1,53 +1,63 @@
 # gnumon
 
-Linux-native port of Intel PresentMon providing real-time frame timing, GPU/CPU hardware telemetry, an in-game overlay, and benchmark CSV capture for Vulkan and OpenGL applications.
+Linux-native port of Intel PresentMon providing real-time frame timing, GPU/CPU hardware telemetry, an in-game swapchain overlay with a frametime oscilloscope, and benchmark CSV capture for Vulkan and OpenGL applications.
 
 ## Overview
 
-gnumon brings Intel PresentMon metrics to Linux with 100% C API compatibility (`PresentMonAPI.h`). It captures presentation timestamps directly from graphics APIs and provides low-overhead IPC, sub-thread TID resolution, hardware sensors monitoring (AMD, NVIDIA, Intel), and an Intel PresentMon 2.x style in-game HUD.
+**gnumon** brings Intel PresentMon 2.x metrics and workflows to Linux with full C API compatibility (`PresentMonAPI.h`). It captures presentation timestamps directly from graphics APIs via a high-performance Vulkan layer and provides lock-free IPC, hardware telemetry (AMD, NVIDIA, Intel), an in-game HUD with a real-time frametime oscilloscope, and a Qt6 GUI with live graph analytics.
 
 ## Features
 
-- Frame Timing: Displayed FPS, presented FPS, CPU frame time, GPU busy time, GPU wait time, display latency, and dropped frames.
-- Graphics APIs: Vulkan implicit and explicit layer (`VK_LAYER_GNUMON_capture`), OpenGL/EGL swap wrapper (`libgnumon_gl.so`).
-- Input Latency: Mouse click-to-photon latency tracking via Linux evdev (`/dev/input/event*`).
-- Telemetry:
-  - AMD GPUs: DRM and hwmon (power, edge/junction/VRAM temperatures, clocks, VRAM usage, fan RPM, voltage).
-  - NVIDIA GPUs: NVML runtime dynamic loader (power, temperatures, clocks, VRAM usage, utilization).
-  - Intel Arc / iGPU: DRM sysfs and hwmon.
-  - CPUs: sysfs RAPL power caps, coretemp/k10temp temperatures, cpufreq clock speeds, and /proc/stat utilization.
-- In-Game Overlay: Real-time HUD styled after Intel PresentMon 2.x with customizable corners, dragging, and live frametime/GPU busy graph.
-- Global Hotkeys:
-  - F11: Toggle overlay visibility.
-  - F10: Start / stop benchmark CSV capture.
-- CLI and GUI:
-  - `gnumon-gui`: Qt6 desktop application and overlay controller.
-  - `gnumon-cli`: Command-line capture tool and live console telemetry.
-  - `gnumond`: Background telemetry coordinator service.
+- **Frametime & Pacing Analysis**:
+  - Displayed FPS, Presented FPS, and Application FPS (distinguishing native application frames from FSR 3 / DLSS 3 frame generation).
+  - CPU frame time, GPU busy time, GPU wait time, render-to-display latency, and animation error.
+  - 1% Low and 0.1% Low framerates.
+- **In-Game Swapchain Overlay**:
+  - Injected directly into the game's swapchain with zero compositor latency.
+  - **Real-time Frametime Oscilloscope** with 16.6 ms (60 FPS) and 33.3 ms (30 FPS) reference lines.
+  - **3 Presets (F8)**: Compact pill, Standard (with oscilloscope), and Detailed (expanded telemetry).
+  - **OSD Toast Banners**: On-screen visual feedback for overlay toggles, preset changes, and benchmark states.
+- **Hardware Telemetry**:
+  - **AMD GPUs**: Linux DRM and hwmon (power, edge/hotspot/memory temperatures, core/memory clocks, VRAM usage, fan RPM, voltage).
+  - **NVIDIA GPUs**: NVML dynamic runtime integration (power, temperatures, clocks, VRAM usage, GPU utilization).
+  - **Intel Arc / iGPU**: DRM sysfs and hwmon sensors.
+  - **CPUs**: sysfs RAPL power caps, coretemp/k10temp temperatures, per-core utilization, and cpufreq clock speeds.
+- **Global Hotkeys** (Works across Wayland, Gamescope, and fullscreen games without window focus):
+  - **F8**: Cycle In-Game Overlay Presets (Compact → Standard → Detailed).
+  - **F9**: Toggle In-Game Overlay HUD.
+  - **F10**: Start / Stop benchmark CSV recording.
+- **Lossless CSV Benchmarking**: Fast, lossless capture of every single frame event with full telemetry data.
+- **Desktop GUI (`gnumon-gui`)**:
+  - Live historical multi-metric graph analyzer with dual Y-axes, hover tooltips, and time window selection (2s to 60s).
+  - Full PresentMon 2.x Metrics Dictionary inspector (80+ parameters).
+  - Floating desktop overlay and Mini-HUD.
 
-## Quick Start (Pre-built Package)
+## Installation & Packages
 
-1. Extract the release archive:
+### 1. AppImage (Standalone / Portable)
+Works out-of-the-box on any modern Linux distribution without installation:
+```bash
+chmod +x gnumon-0.1.0-x86_64.AppImage
+./gnumon-0.1.0-x86_64.AppImage
+```
+
+### 2. Debian / Ubuntu (.deb)
+```bash
+sudo dpkg -i gnumon-0.1.0-Linux.deb
+```
+
+### 3. Tarball Archive (.tar.gz)
 ```bash
 tar -xzf gnumon-0.1.0-Linux.tar.gz
 cd gnumon-0.1.0-Linux
-```
-
-2. Run the layer installation script:
-```bash
 ./scripts/install-layers.sh
 ```
-This registers the Vulkan layer into `~/.local/share/vulkan/` and copies binaries to `~/.local/bin` without requiring root permissions.
-
-3. Launch the GUI:
-```bash
-gnumon-gui
-```
+`install-layers.sh` registers the Vulkan layer for both native Steam and Flatpak Steam.
 
 ## Running Games
 
 ### Steam Launch Options
-Set the launch options of your game in Steam:
+In game Properties → Launch Options, set:
 ```text
 gnumon-run %command%
 ```
@@ -56,7 +66,7 @@ Or via environment variable:
 ENABLE_GNUMON=1 %command%
 ```
 
-### Standalone Games / Proton
+### Standalone Games / Proton / Lutris
 ```bash
 gnumon-run /path/to/game_executable
 ```
@@ -66,36 +76,38 @@ gnumon-run /path/to/game_executable
 ### Dependencies
 - CMake 3.20+
 - Ninja build system
-- C++20 compliant compiler (GCC 12+ or Clang 15+)
+- C++20 compiler (GCC 12+ or Clang 15+)
 - Vulkan headers and loader (`vulkan-headers`, `vulkan-icd-loader`)
-- Qt6 (Optional, for `gnumon-gui`: `qt6-base`)
+- Qt6 (`qt6-base`, `libgl-dev`) for `gnumon-gui`
 
-### Build Steps
+### Host Build
 ```bash
-cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
+cmake -B build-host -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C build-host
 ```
 
-To create a release tarball:
-```bash
-cpack --config build/CPackConfig.cmake
-```
-
-### Podman / Docker Container Build
-To build in a clean Ubuntu 22.04 LTS container environment:
+### Container Build (Ubuntu 22.04 LTS / GLIBC 2.35)
+To build portable binaries against GLIBC 2.35 using Podman/Docker:
 ```bash
 ./build-in-container.sh
 ```
 
+### Building AppImage & Packages
+```bash
+./packaging/build-appimage.sh
+podman run --rm -v $(pwd):/workspace:Z -w /workspace/build-container gnumon-builder:ubuntu22.04 cpack -G "DEB;TGZ"
+```
+
 ## Architecture
 
-- `src/layer/`: Vulkan layer (`libVkLayer_gnumon.so`) and OpenGL wrapper (`libgnumon_gl.so`).
-- `src/ipc/`: Lock-free SPSC circular ring buffer residing in POSIX shared memory (`/dev/shm/gnumon_ring_<PID>`).
+- `src/layer/`: Vulkan layer (`libVkLayer_gnumon.so`), swapchain renderer, and OpenGL wrapper (`libgnumon_gl.so`).
+- `src/ipc/`: Lock-free circular ring buffer in POSIX shared memory (`/dev/shm/gnumon_ring_<PID>`).
 - `src/control/`: Hardware telemetry providers (AMD DRM, NVIDIA NVML, Intel DRM, Linux CPU) and evdev latency tracker.
-- `src/service/`: Central telemetry coordinator (`gnumond`).
+- `src/service/`: Telemetry coordinator and sliding statistics engine.
 - `src/api/`: Intel PresentMon 2.x C API compatibility layer (`libpresentmon.so`).
-- `src/gui/`: Qt6 management application and floating in-game overlay.
-- `src/cli/`: Command-line interface (`gnumon-cli`).
+- `src/gui/`: Qt6 management application, live graph analyzer, and floating desktop HUD.
+- `src/cli/`: Command-line capture tool and telemetry monitor (`gnumon-cli`).
+- `src/daemon/`: Background telemetry coordinator service (`gnumond`).
 
 ## License
 
