@@ -659,9 +659,15 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
             size_t count = n / sizeof(struct input_event);
             for (size_t i = 0; i < count; ++i) {
                 if (iev[i].type == EV_KEY && iev[i].value == 1) {
-                    if (iev[i].code == 67 /* KEY_F9 */) {
+                    if (iev[i].code == 66 /* KEY_F8 */) {
+                        int nextPreset = (g_overlayRenderer.GetPreset() + 1) % 3;
+                        g_overlayRenderer.SetPreset(nextPreset);
+                        const char* presetNames[] = {"Compact", "Standard (Oscilloscope)", "Detailed"};
+                        g_overlayRenderer.TriggerToast("Preset Changed", presetNames[nextPreset], 2.5f);
+                    } else if (iev[i].code == 67 /* KEY_F9 */) {
                         g_enableOverlay = !g_enableOverlay;
                         g_producer.SetOverlayEnabled(g_enableOverlay);
+                        g_overlayRenderer.TriggerToast("In-Game Overlay", g_enableOverlay ? "ENABLED" : "DISABLED", 2.0f);
                         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
                             fprintf(stderr, "[gnumon-layer] Evdev hotkey F9 pressed! In-Game HUD: %s\n",
                                     g_enableOverlay ? "ON" : "OFF");
@@ -669,6 +675,8 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
                     } else if (iev[i].code == 68 /* KEY_F10 */) {
                         bool newRec = !g_producer.IsRecordingActive();
                         g_producer.SetRecordingActive(newRec);
+                        g_overlayRenderer.TriggerToast(newRec ? "Benchmark Capture" : "Capture Saved",
+                                                       newRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
                         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
                             fprintf(stderr, "[gnumon-layer] Evdev hotkey F10 pressed! Capture: %s\n",
                                     newRec ? "STARTING" : "STOPPED");
@@ -689,6 +697,7 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
     static XQueryKeymap_fn pXQueryKeymap = nullptr;
     static XKeysymToKeycode_fn pXKeysymToKeycode = nullptr;
     static void* dpy = nullptr;
+    static uint8_t kcF8 = 0;
     static uint8_t kcF9 = 0;
     static uint8_t kcF10 = 0;
     static uint64_t lastDpyTryNs = 0;
@@ -708,6 +717,7 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
         if (pXOpenDisplay) {
             dpy = pXOpenDisplay(nullptr);
             if (dpy && pXKeysymToKeycode) {
+                kcF8 = pXKeysymToKeycode(dpy, 0xffc5 /* XK_F8 */);
                 kcF9 = pXKeysymToKeycode(dpy, 0xffc6 /* XK_F9 */);
                 kcF10 = pXKeysymToKeycode(dpy, 0xffc7 /* XK_F10 */);
             }
@@ -725,11 +735,22 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
         return (keys[kc / 8] & (1 << (kc % 8))) != 0;
     };
 
+    static bool wasF8 = false;
+    bool downF8 = isDown(kcF8);
+    if (downF8 && !wasF8) {
+        int nextPreset = (g_overlayRenderer.GetPreset() + 1) % 3;
+        g_overlayRenderer.SetPreset(nextPreset);
+        const char* presetNames[] = {"Compact", "Standard (Oscilloscope)", "Detailed"};
+        g_overlayRenderer.TriggerToast("Preset Changed", presetNames[nextPreset], 2.5f);
+    }
+    wasF8 = downF8;
+
     static bool wasF9 = false;
     bool downF9 = isDown(kcF9);
     if (downF9 && !wasF9) {
         g_enableOverlay = !g_enableOverlay;
         g_producer.SetOverlayEnabled(g_enableOverlay);
+        g_overlayRenderer.TriggerToast("In-Game Overlay", g_enableOverlay ? "ENABLED" : "DISABLED", 2.0f);
         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
             fprintf(stderr, "[gnumon-layer] In-game hotkey F9 pressed! In-Game HUD: %s\n",
                     g_enableOverlay ? "ON" : "OFF");
@@ -742,6 +763,8 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
     if (downF10 && !wasF10) {
         bool newRec = !g_producer.IsRecordingActive();
         g_producer.SetRecordingActive(newRec);
+        g_overlayRenderer.TriggerToast(newRec ? "Benchmark Capture" : "Capture Saved",
+                                       newRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
             fprintf(stderr, "[gnumon-layer] In-game hotkey F10 pressed! Capture: %s\n",
                     newRec ? "STARTING" : "STOPPED");
@@ -762,7 +785,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
         g_enableOverlay = currentProducerOverlay;
         lastProducerOverlay = currentProducerOverlay;
     }
-    bool overlayActive = g_enableOverlay;
+    bool overlayActive = g_enableOverlay || g_overlayRenderer.HasActiveToast();
     bool isRec = g_producer.IsRecordingActive();
     bool overlayRendered = false;
     VkSemaphore overlaySignalSem = VK_NULL_HANDLE;
@@ -876,7 +899,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                                                     pPresentInfo->waitSemaphoreCount,
                                                     pPresentInfo->pWaitSemaphores,
                                                     &overlaySignalSem,
-                                                    hasTelem ? &telemSnap : nullptr)) {
+                                                    hasTelem ? &telemSnap : nullptr,
+                                                    g_enableOverlay)) {
                         overlayRendered = true;
                     }
                 }

@@ -7,8 +7,11 @@
 #include <QTableWidget>
 #include <QProgressBar>
 #include <QLineEdit>
+#include <QComboBox>
+#include <QCheckBox>
 #include <QTimer>
 #include <vector>
+#include "MetricGraphWidget.h"
 #include "../../include/gnumon/PresentMonAPI.h"
 
 namespace gnumon::gui {
@@ -21,6 +24,7 @@ public:
     ~AllMetricsDialog() override = default;
 
     void SetTargetProcess(uint32_t pid);
+    void SelectMetricForChart(int metricId);
 
 private slots:
     void OnRefreshTimer();
@@ -28,10 +32,16 @@ private slots:
     void OnCopyJson();
     void OnExportCsv();
     void OnSearchFilterChanged(const QString& text);
+    void OnPrimaryMetricChanged(int index);
+    void OnSecondaryMetricChanged(int index);
+    void OnSecondaryToggle(bool checked);
+    void OnTimeWindowChanged(int index);
+    void OnTableMetricDoubleClicked(int row, int col);
 
 private:
     void SetupUi();
     void SetupOverviewTab(QTabWidget *tabs);
+    void SetupLiveChartTab(QTabWidget *tabs);
     void SetupPacingTab(QTabWidget *tabs);
     void SetupLatencyTab(QTabWidget *tabs);
     void SetupGpuTab(QTabWidget *tabs);
@@ -41,6 +51,7 @@ private:
     void SetupDictionaryTab(QTabWidget *tabs);
 
     void UpdateDashboard(const PM_FULL_TELEMETRY_SNAPSHOT& s);
+    void UpdateLiveChart(const PM_FULL_TELEMETRY_SNAPSHOT& s);
     void UpdatePacing(const PM_FULL_TELEMETRY_SNAPSHOT& s);
     void UpdateLatency(const PM_FULL_TELEMETRY_SNAPSHOT& s);
     void UpdateGpu(const PM_FULL_TELEMETRY_SNAPSHOT& s);
@@ -167,6 +178,19 @@ private:
         QString description;
     };
     std::vector<MetricRowDef> metricDefs_;
+
+    // Live Chart Tab
+    QTabWidget *tabWidget_ = nullptr;
+    MetricGraphWidget *metricGraph_ = nullptr;
+    QComboBox *comboPrimary_ = nullptr;
+    QComboBox *comboSecondary_ = nullptr;
+    QCheckBox *checkSecondary_ = nullptr;
+    QComboBox *comboWindow_ = nullptr;
+    QLabel *lblChartCur_ = nullptr;
+    QLabel *lblChartMin_ = nullptr;
+    QLabel *lblChartMax_ = nullptr;
+    QLabel *lblChartAvg_ = nullptr;
+    QLabel *lblChartP99_ = nullptr;
 
     PM_FULL_TELEMETRY_SNAPSHOT lastSnapshot_{};
 };

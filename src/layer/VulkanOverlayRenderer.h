@@ -183,6 +183,30 @@ public:
         return swapchains_.find(swapchain) != swapchains_.end();
     }
 
+    void SetPreset(int preset) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        hudPreset_ = std::clamp(preset, 0, 2);
+    }
+
+    int GetPreset() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return hudPreset_;
+    }
+
+    bool HasActiveToast() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        uint64_t nowNs = gnumon::common::Clock::GetTimestampNs();
+        return (nowNs < toastExpiryNs_ && !toastTitle_.empty());
+    }
+
+    void TriggerToast(const std::string& title, const std::string& message, float durationSec = 3.0f) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        toastTitle_ = title;
+        toastMessage_ = message;
+        uint64_t nowNs = gnumon::common::Clock::GetTimestampNs();
+        toastExpiryNs_ = nowNs + static_cast<uint64_t>(durationSec * 1'000'000'000.0f);
+    }
+
     bool RenderHud(VkQueue graphicsQueue, VkQueue presentQueue,
                    uint32_t graphicsQueueFamily, uint32_t presentQueueFamily,
                    VkSwapchainKHR swapchain, uint32_t imageIndex,
@@ -191,7 +215,8 @@ public:
                    bool isRecording, int corner,
                    uint32_t waitSemCount, const VkSemaphore* pWaitSems,
                    VkSemaphore* outSignalSem,
-                   const ipc::TelemetrySnapshot* telem = nullptr)
+                   const ipc::TelemetrySnapshot* telem = nullptr,
+                   bool hudVisible = true)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!initialized_ || !device_) return false;
@@ -216,7 +241,7 @@ public:
         std::vector<OverlayVertex> verts;
         GenerateHudVertices(verts, sw, sh, corner,
                             presentFps, displayedFps, fps1PercentLow,
-                            frameTimeMs, latencyMs, animErrorMs, isRecording, telem);
+                            frameTimeMs, latencyMs, animErrorMs, isRecording, telem, hudVisible);
 
         if (verts.empty() || imageIndex >= sd.vertexMapped.size() || !sd.vertexMapped[imageIndex]) {
             return false;
@@ -957,13 +982,81 @@ private:
                              double presentFps, double displayedFps, double fps1PercentLow,
                              double frameTimeMs, double latencyMs, double animErrorMs,
                              bool isRecording,
-                             const ipc::TelemetrySnapshot* telem = nullptr)
+                             const ipc::TelemetrySnapshot* telem = nullptr,
+                             bool hudVisible = true)
     {
         bool hasTelem = (telem && telem->valid != 0);
         float uiScale = std::clamp(std::min(static_cast<float>(sw) / 1920.0f, static_cast<float>(sh) / 1080.0f), 0.85f, 2.0f);
-        float cardW = 460.0f * uiScale;
-        float cardH = (hasTelem ? 226.0f : 205.0f) * uiScale;
+        char buf[128];
+
+        // 0. Render OSD Toast Notification if active
+        uint64_t nowNs = gnumon::common::Clock::GetTimestampNs();
+        if (nowNs < toastExpiryNs_ && !toastTitle_.empty()) {
+            float toastW = 480.0f * uiScale;
+            float toastH = 46.0f * uiScale;
+            float toastX = (static_cast<float>(sw) - toastW) * 0.5f;
+            float toastY = 24.0f * uiScale;
+
+            // Toast backdrop & glowing border
+            AddQuad(verts, toastX - 1.5f, toastY - 1.5f, toastW + 3.0f, toastH + 3.0f, 0.0f, 0.90f, 0.55f, 0.85f);
+            AddQuad(verts, toastX, toastY, toastW, toastH, 0.05f, 0.07f, 0.10f, 0.95f);
+            AddQuad(verts, toastX, toastY + toastH - 2.5f * uiScale, toastW, 2.5f * uiScale, 0.0f, 0.90f, 0.55f, 0.95f);
+
+            AddString(verts, toastTitle_.c_str(), toastX + 14.0f * uiScale, toastY + 8.0f * uiScale, 0.82f * uiScale, 0.0f, 0.90f, 0.55f, 1.0f);
+            AddString(verts, toastMessage_.c_str(), toastX + 14.0f * uiScale, toastY + 26.0f * uiScale, 0.70f * uiScale, 0.85f, 0.90f, 0.95f, 0.90f);
+        }
+
+        if (!hudVisible) {
+            return;
+        }
+
         float margin = 20.0f * uiScale;
+
+        // 1. If Compact preset (hudPreset_ == 0), render sleek minimal pill HUD
+        if (hudPreset_ == 0) {
+            float compW = 440.0f * uiScale;
+            float compH = 34.0f * uiScale;
+            float compX = margin;
+            float compY = margin;
+            if (corner == 1 || corner == 3) compX = static_cast<float>(sw) - compW - margin;
+            if (corner == 2 || corner == 3) compY = static_cast<float>(sh) - compH - margin;
+
+            AddQuad(verts, compX - 1.0f, compY - 1.0f, compW + 2.0f, compH + 2.0f, 0.0f, 0.74f, 0.83f, 0.40f);
+            AddQuad(verts, compX, compY, compW, compH, 0.04f, 0.06f, 0.09f, 0.88f);
+            AddQuad(verts, compX, compY, compW, 1.5f * uiScale, 0.0f, 0.74f, 0.83f, 0.90f);
+
+            float curX = compX + 10.0f * uiScale;
+            float rY = compY + 8.0f * uiScale;
+            curX += AddString(verts, "GNUMON", curX, rY, 0.78f * uiScale, 0.0f, 0.90f, 0.55f, 1.0f) + 8.0f * uiScale;
+
+            snprintf(buf, sizeof(buf), "%.0f FPS", displayedFps > 0.0 ? displayedFps : presentFps);
+            curX += AddString(verts, buf, curX, rY, 0.82f * uiScale, 1.0f, 1.0f, 1.0f, 1.0f) + 6.0f * uiScale;
+
+            if (fps1PercentLow > 0.1) {
+                snprintf(buf, sizeof(buf), "(1%% %.0f)", fps1PercentLow);
+                curX += AddString(verts, buf, curX, rY, 0.72f * uiScale, 1.0f, 0.75f, 0.20f, 0.90f) + 8.0f * uiScale;
+            }
+
+            snprintf(buf, sizeof(buf), "%.1f ms", frameTimeMs);
+            curX += AddString(verts, buf, curX, rY, 0.75f * uiScale, 0.40f, 0.85f, 0.95f, 0.90f) + 8.0f * uiScale;
+
+            if (hasTelem) {
+                snprintf(buf, sizeof(buf), "GPU %.0f%% %.0fC", telem->gpuUtil, telem->gpuTemp);
+                curX += AddString(verts, buf, curX, rY, 0.72f * uiScale, 0.35f, 0.85f, 1.0f, 0.90f) + 8.0f * uiScale;
+
+                snprintf(buf, sizeof(buf), "CPU %.0f%%", telem->cpuUtil);
+                curX += AddString(verts, buf, curX, rY, 0.72f * uiScale, 0.50f, 0.90f, 0.50f, 0.90f) + 8.0f * uiScale;
+            }
+
+            if (isRecording) {
+                AddString(verts, "[REC]", curX, rY, 0.75f * uiScale, 1.0f, 0.25f, 0.25f, 1.0f);
+            }
+            return;
+        }
+
+        // Standard or Detailed Card
+        float cardW = 460.0f * uiScale;
+        float cardH = (hasTelem ? (hudPreset_ == 2 ? 248.0f : 226.0f) : 205.0f) * uiScale;
 
         float cardX = margin;
         float cardY = margin;
@@ -976,7 +1069,7 @@ private:
             cardY = static_cast<float>(sh) - cardH - margin;
         }
 
-        // 1. Premium dark card background + border glow
+        // Premium dark card background + border glow
         AddQuad(verts, cardX - 2.0f * uiScale, cardY - 2.0f * uiScale,
                 cardW + 4.0f * uiScale, cardH + 4.0f * uiScale, 0.0f, 0.74f, 0.83f, 0.35f);
         AddQuad(verts, cardX, cardY, cardW, cardH, 0.04f, 0.06f, 0.09f, 0.90f);
@@ -984,8 +1077,6 @@ private:
 
         float padX = cardX + 14.0f * uiScale;
         float gapX = 10.0f * uiScale;
-
-        char buf[128];
 
         // --- ROW 1: Header / Title + Status Badge ---
         float r1_y = cardY + 10.0f * uiScale;
@@ -1043,6 +1134,14 @@ private:
                 AddString(verts, buf, curX, r4_y, 0.78f * uiScale, 0.85f, 0.70f, 1.0f, 0.95f);
             }
             gy = cardY + 97.0f * uiScale;
+        }
+
+        if (hudPreset_ == 2 && hasTelem) {
+            float rExtra_y = gy;
+            curX = padX;
+            snprintf(buf, sizeof(buf), "GPU Clk: %.0f MHz | CPU Clk: %.0f MHz", telem->gpuFreq, telem->cpuFreq);
+            AddString(verts, buf, curX, rExtra_y, 0.75f * uiScale, 0.70f, 0.85f, 0.95f, 0.90f);
+            gy += 21.0f * uiScale;
         }
 
         // --- ROW 5: Real-time Oscilloscope (Frametime Graph) ---
@@ -1143,6 +1242,10 @@ private:
 
     std::unordered_map<VkSwapchainKHR, SwapchainData> swapchains_;
     std::deque<float> frametimes_;
+    int hudPreset_ = 1;
+    std::string toastTitle_;
+    std::string toastMessage_;
+    uint64_t toastExpiryNs_ = 0;
 
     // Function pointers
     PFN_vkCreateCommandPool createCommandPool_ = nullptr;

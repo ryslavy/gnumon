@@ -64,6 +64,7 @@ private:
     std::deque<ipc::FrameEvent> frameEventQueue_;
     common::SlidingStatistics fpsHistory_;
     common::SlidingStatistics displayedFpsHistory_;
+    common::SlidingStatistics appFpsHistory_;
     common::SlidingStatistics frameTimeHistory_;
     common::SlidingStatistics latencyHistory_;
     common::SlidingStatistics animErrorHistory_;

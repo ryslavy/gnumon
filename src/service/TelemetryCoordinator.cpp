@@ -92,6 +92,9 @@ void TelemetryCoordinator::RecordFrameLocked(const ipc::FrameEvent& f) {
         double ftMs = static_cast<double>(f.frameTimeNs) / 1'000'000.0;
         fpsHistory_.Push(f.presentStartTimestampNs, fps);
         frameTimeHistory_.Push(f.presentStartTimestampNs, ftMs);
+        if (f.frameType != PM_FRAME_TYPE_INTEL_XEFG && f.frameType != PM_FRAME_TYPE_AMD_AFMF && f.frameType != PM_FRAME_TYPE_REPEATED) {
+            appFpsHistory_.Push(f.presentStartTimestampNs, fps);
+        }
     }
 
     // Displayed FPS (tracking non-dropped frames)
@@ -238,6 +241,7 @@ double TelemetryCoordinator::GetStatisticalMetric(PM_METRIC metric, PM_STAT stat
 
     fpsHistory_.PruneOlderThan(cutoffNs);
     displayedFpsHistory_.PruneOlderThan(cutoffNs);
+    appFpsHistory_.PruneOlderThan(cutoffNs);
     frameTimeHistory_.PruneOlderThan(cutoffNs);
     latencyHistory_.PruneOlderThan(cutoffNs);
     animErrorHistory_.PruneOlderThan(cutoffNs);
@@ -245,7 +249,9 @@ double TelemetryCoordinator::GetStatisticalMetric(PM_METRIC metric, PM_STAT stat
     const common::SlidingStatistics* targetStats = nullptr;
     if (metric == PM_METRIC_DISPLAYED_FPS) {
         targetStats = &displayedFpsHistory_;
-    } else if (metric == PM_METRIC_PRESENTED_FPS || metric == PM_METRIC_APPLICATION_FPS) {
+    } else if (metric == PM_METRIC_APPLICATION_FPS) {
+        targetStats = &appFpsHistory_;
+    } else if (metric == PM_METRIC_PRESENTED_FPS) {
         targetStats = &fpsHistory_;
     } else if (metric == PM_METRIC_CPU_FRAME_TIME || metric == PM_METRIC_DISPLAYED_FRAME_TIME || metric == PM_METRIC_PRESENTED_FRAME_TIME) {
         targetStats = &frameTimeHistory_;

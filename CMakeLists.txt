@@ -155,6 +155,8 @@ if(Qt6_FOUND)
         src/gui/SettingsDialog.h
         src/gui/AllMetricsDialog.cpp
         src/gui/AllMetricsDialog.h
+        src/gui/MetricGraphWidget.cpp
+        src/gui/MetricGraphWidget.h
         src/gui/PresentMonOverlay.cpp
         src/gui/PresentMonOverlay.h
     )

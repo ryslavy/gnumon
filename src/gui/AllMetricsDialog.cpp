@@ -58,6 +58,40 @@ QWidget* CreateCardWidget(const QString& title, QLabel** outVal, QLabel** outSub
 
     return card;
 }
+
+double GetSnapshotMetricValue(int metricId, const PM_FULL_TELEMETRY_SNAPSHOT& s, int extraIdx = 0) {
+    switch (metricId) {
+    case PM_METRIC_DISPLAYED_FPS: return s.displayedFps;
+    case PM_METRIC_PRESENTED_FPS: return s.presentFps;
+    case PM_METRIC_APPLICATION_FPS: return s.appFps;
+    case PM_METRIC_CPU_FRAME_TIME: return s.cpuFrameTimeMs;
+    case PM_METRIC_DISPLAYED_FRAME_TIME: return s.displayedFrameTimeMs;
+    case PM_METRIC_PRESENTED_FRAME_TIME: return s.presentedFrameTimeMs;
+    case PM_METRIC_IN_PRESENT_API: return s.inPresentApiMs;
+    case PM_METRIC_UNTIL_DISPLAYED: return s.untilDisplayedMs;
+    case PM_METRIC_PC_LATENCY: return s.pcLatencyMs;
+    case PM_METRIC_DISPLAY_LATENCY: return s.displayLatencyMs;
+    case PM_METRIC_CLICK_TO_PHOTON_LATENCY: return s.clickToPhotonLatencyMs;
+    case PM_METRIC_ANIMATION_ERROR: return s.animationErrorMs;
+    case PM_METRIC_GPU_UTILIZATION: return s.gpuUtilizationPercent;
+    case PM_METRIC_GPU_POWER: return s.gpuPowerWatts;
+    case PM_METRIC_GPU_TEMPERATURE: return (extraIdx == 1) ? s.gpuTemperatureHotspotC : s.gpuTemperatureEdgeC;
+    case PM_METRIC_GPU_FREQUENCY: return s.gpuFrequencyMhz;
+    case PM_METRIC_GPU_VOLTAGE: return s.gpuVoltageMv;
+    case PM_METRIC_GPU_FAN_SPEED: return s.gpuFanSpeedRpm;
+    case PM_METRIC_GPU_BUSY: return s.gpuBusyMs;
+    case PM_METRIC_GPU_WAIT: return s.gpuWaitMs;
+    case PM_METRIC_GPU_MEM_USED: return static_cast<double>(s.vramUsedBytes) / (1024.0 * 1024.0 * 1024.0);
+    case PM_METRIC_GPU_MEM_UTILIZATION: return s.vramUtilizationPercent;
+    case PM_METRIC_CPU_UTILIZATION: return s.cpuUtilizationPercent;
+    case PM_METRIC_CPU_POWER: return s.cpuPackagePowerWatts;
+    case PM_METRIC_CPU_TEMPERATURE: return s.cpuTemperatureC;
+    case PM_METRIC_CPU_FREQUENCY: return s.cpuFrequencyMhz;
+    case PM_METRIC_CPU_BUSY: return s.cpuBusyMs;
+    case PM_METRIC_CPU_WAIT: return s.cpuWaitMs;
+    default: return 0.0;
+    }
+}
 } // namespace
 
 AllMetricsDialog::AllMetricsDialog(PM_SESSION_HANDLE session, uint32_t processId, QWidget *parent)
@@ -159,7 +193,9 @@ void AllMetricsDialog::SetupUi() {
 
     // --- Tab Widget ---
     auto *tabs = new QTabWidget(this);
+    tabWidget_ = tabs;
     SetupOverviewTab(tabs);
+    SetupLiveChartTab(tabs);
     SetupPacingTab(tabs);
     SetupLatencyTab(tabs);
     SetupGpuTab(tabs);
@@ -196,6 +232,200 @@ void AllMetricsDialog::SetupOverviewTab(QTabWidget *tabs) {
     layout->addWidget(CreateCardWidget("DISPLAY SYNC & TEARING", &lblSyncOverview_, &lblSyncOverviewSub_), 1, 3);
 
     tabs->addTab(tab, "Overview Dashboard");
+}
+
+void AllMetricsDialog::SetupLiveChartTab(QTabWidget *tabs) {
+    auto *tab = new QWidget();
+    auto *layout = new QVBoxLayout(tab);
+    layout->setContentsMargins(14, 14, 14, 14);
+    layout->setSpacing(10);
+
+    // Top Controls Bar
+    auto *controlBar = new QWidget(tab);
+    controlBar->setStyleSheet("background-color: #171b22; border: 1px solid #2a313d; border-radius: 6px; padding: 4px;");
+    auto *barLayout = new QHBoxLayout(controlBar);
+    barLayout->setContentsMargins(10, 6, 10, 6);
+    barLayout->setSpacing(10);
+
+    auto *lblP = new QLabel("Primary Metric:", controlBar);
+    lblP->setStyleSheet("font-weight: bold; color: #00e5ff;");
+    comboPrimary_ = new QComboBox(controlBar);
+    comboPrimary_->setStyleSheet("background-color: #101216; color: #00e5ff; border: 1px solid #00e5ff; font-weight: bold; padding: 4px; border-radius: 4px;");
+
+    checkSecondary_ = new QCheckBox("Secondary:", controlBar);
+    checkSecondary_->setStyleSheet("font-weight: bold; color: #ff7043;");
+    connect(checkSecondary_, &QCheckBox::toggled, this, &AllMetricsDialog::OnSecondaryToggle);
+
+    comboSecondary_ = new QComboBox(controlBar);
+    comboSecondary_->setStyleSheet("background-color: #101216; color: #ff7043; border: 1px solid #ff7043; font-weight: bold; padding: 4px; border-radius: 4px;");
+    comboSecondary_->setEnabled(false);
+
+    auto *lblW = new QLabel("Window:", controlBar);
+    lblW->setStyleSheet("color: #90a4ae; font-weight: bold;");
+    comboWindow_ = new QComboBox(controlBar);
+    comboWindow_->addItems({"2 Seconds", "5 Seconds", "10 Seconds", "30 Seconds", "60 Seconds"});
+    comboWindow_->setCurrentIndex(2); // 10s default
+    connect(comboWindow_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AllMetricsDialog::OnTimeWindowChanged);
+
+    auto *btnClear = new QPushButton("Clear History", controlBar);
+    btnClear->setStyleSheet("padding: 4px 12px;");
+    connect(btnClear, &QPushButton::clicked, this, [this]() {
+        if (metricGraph_) metricGraph_->Clear();
+    });
+
+    barLayout->addWidget(lblP);
+    barLayout->addWidget(comboPrimary_, 1);
+    barLayout->addWidget(checkSecondary_);
+    barLayout->addWidget(comboSecondary_, 1);
+    barLayout->addWidget(lblW);
+    barLayout->addWidget(comboWindow_);
+    barLayout->addWidget(btnClear);
+    layout->addWidget(controlBar);
+
+    // Metric Graph Canvas
+    metricGraph_ = new MetricGraphWidget(tab);
+    layout->addWidget(metricGraph_, 1);
+
+    // Live Stats Summary Bar below graph
+    auto *statsGroup = new QGroupBox("Real-Time Timeline Statistics", tab);
+    auto *statsLayout = new QHBoxLayout(statsGroup);
+    statsLayout->setContentsMargins(12, 8, 12, 8);
+
+    lblChartCur_ = new QLabel("Current: --", statsGroup);
+    lblChartCur_->setStyleSheet("color: #00e5ff; font-weight: bold; font-size: 13px; font-family: monospace;");
+
+    lblChartMin_ = new QLabel("Min: --", statsGroup);
+    lblChartMin_->setStyleSheet("color: #90a4ae; font-family: monospace;");
+
+    lblChartMax_ = new QLabel("Max: --", statsGroup);
+    lblChartMax_->setStyleSheet("color: #90a4ae; font-family: monospace;");
+
+    lblChartAvg_ = new QLabel("Avg: --", statsGroup);
+    lblChartAvg_->setStyleSheet("color: #00e676; font-weight: bold; font-family: monospace;");
+
+    lblChartP99_ = new QLabel("99th% / 1% Low: --", statsGroup);
+    lblChartP99_->setStyleSheet("color: #ffd54f; font-weight: bold; font-family: monospace;");
+
+    statsLayout->addWidget(lblChartCur_);
+    statsLayout->addStretch();
+    statsLayout->addWidget(lblChartMin_);
+    statsLayout->addStretch();
+    statsLayout->addWidget(lblChartMax_);
+    statsLayout->addStretch();
+    statsLayout->addWidget(lblChartAvg_);
+    statsLayout->addStretch();
+    statsLayout->addWidget(lblChartP99_);
+
+    layout->addWidget(statsGroup);
+
+    // Populate Metrics into Combos
+    struct ChartMetricOption {
+        int id;
+        int subIdx;
+        QString label;
+        QString unit;
+    };
+
+    static const std::vector<ChartMetricOption> options = {
+        { PM_METRIC_DISPLAYED_FPS, 0, "Displayed FPS", "FPS" },
+        { PM_METRIC_CPU_FRAME_TIME, 0, "CPU Frame Time", "ms" },
+        { PM_METRIC_PRESENTED_FPS, 0, "Presented FPS", "FPS" },
+        { PM_METRIC_APPLICATION_FPS, 0, "Application FPS", "FPS" },
+        { PM_METRIC_DISPLAYED_FRAME_TIME, 0, "Displayed Frame Time", "ms" },
+        { PM_METRIC_IN_PRESENT_API, 0, "Time in Present API", "ms" },
+        { PM_METRIC_UNTIL_DISPLAYED, 0, "Time Until Displayed", "ms" },
+        { PM_METRIC_PC_LATENCY, 0, "PC Latency", "ms" },
+        { PM_METRIC_DISPLAY_LATENCY, 0, "Display Latency", "ms" },
+        { PM_METRIC_CLICK_TO_PHOTON_LATENCY, 0, "Click-To-Photon Latency", "ms" },
+        { PM_METRIC_ANIMATION_ERROR, 0, "Animation Error (Smoothness)", "ms" },
+        { PM_METRIC_GPU_UTILIZATION, 0, "GPU Utilization", "%" },
+        { PM_METRIC_GPU_POWER, 0, "GPU Power", "W" },
+        { PM_METRIC_GPU_TEMPERATURE, 0, "GPU Temperature (Edge)", "°C" },
+        { PM_METRIC_GPU_TEMPERATURE, 1, "GPU Temperature (Hotspot)", "°C" },
+        { PM_METRIC_GPU_FREQUENCY, 0, "GPU Clock Frequency", "MHz" },
+        { PM_METRIC_GPU_VOLTAGE, 0, "GPU Core Voltage", "mV" },
+        { PM_METRIC_GPU_FAN_SPEED, 0, "GPU Fan Speed", "RPM" },
+        { PM_METRIC_GPU_BUSY, 0, "GPU Busy Time", "ms" },
+        { PM_METRIC_GPU_WAIT, 0, "GPU Wait Time", "ms" },
+        { PM_METRIC_GPU_MEM_USED, 0, "VRAM Used", "GB" },
+        { PM_METRIC_GPU_MEM_UTILIZATION, 0, "VRAM Utilization", "%" },
+        { PM_METRIC_CPU_UTILIZATION, 0, "CPU Utilization", "%" },
+        { PM_METRIC_CPU_POWER, 0, "CPU Package Power", "W" },
+        { PM_METRIC_CPU_TEMPERATURE, 0, "CPU Temperature", "°C" },
+        { PM_METRIC_CPU_FREQUENCY, 0, "CPU Frequency", "MHz" },
+        { PM_METRIC_CPU_BUSY, 0, "CPU Busy Time", "ms" },
+        { PM_METRIC_CPU_WAIT, 0, "CPU Wait Time", "ms" },
+    };
+
+    for (const auto& opt : options) {
+        QVariant data = QVariant::fromValue(opt.id * 10 + opt.subIdx);
+        comboPrimary_->addItem(opt.label + " (" + opt.unit + ")", data);
+        comboSecondary_->addItem(opt.label + " (" + opt.unit + ")", data);
+    }
+
+    comboPrimary_->setCurrentIndex(0); // Displayed FPS
+    comboSecondary_->setCurrentIndex(1); // CPU Frame Time
+
+    connect(comboPrimary_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AllMetricsDialog::OnPrimaryMetricChanged);
+    connect(comboSecondary_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AllMetricsDialog::OnSecondaryMetricChanged);
+
+    OnPrimaryMetricChanged(0);
+    OnSecondaryMetricChanged(1);
+
+    tabs->addTab(tab, "📈 Live Graph Analyzer");
+}
+
+void AllMetricsDialog::OnPrimaryMetricChanged(int index) {
+    if (!metricGraph_ || index < 0 || !comboPrimary_) return;
+    QString text = comboPrimary_->itemText(index);
+    QString unit = text.contains('(') ? text.section('(', 1).section(')', 0) : "";
+    QString name = text.section('(', 0, 0).trimmed();
+    metricGraph_->SetPrimarySeries(name, unit, QColor(0, 229, 255));
+}
+
+void AllMetricsDialog::OnSecondaryMetricChanged(int index) {
+    if (!metricGraph_ || index < 0 || !comboSecondary_) return;
+    QString text = comboSecondary_->itemText(index);
+    QString unit = text.contains('(') ? text.section('(', 1).section(')', 0) : "";
+    QString name = text.section('(', 0, 0).trimmed();
+    metricGraph_->SetSecondarySeries(name, unit, QColor(255, 112, 67));
+}
+
+void AllMetricsDialog::OnSecondaryToggle(bool checked) {
+    if (comboSecondary_) comboSecondary_->setEnabled(checked);
+    if (metricGraph_) metricGraph_->EnableSecondarySeries(checked);
+}
+
+void AllMetricsDialog::OnTimeWindowChanged(int index) {
+    if (!metricGraph_) return;
+    double sec = 10.0;
+    if (index == 0) sec = 2.0;
+    else if (index == 1) sec = 5.0;
+    else if (index == 2) sec = 10.0;
+    else if (index == 3) sec = 30.0;
+    else if (index == 4) sec = 60.0;
+    metricGraph_->SetTimeWindow(sec);
+}
+
+void AllMetricsDialog::SelectMetricForChart(int metricId) {
+    if (!comboPrimary_) return;
+    for (int i = 0; i < comboPrimary_->count(); ++i) {
+        int val = comboPrimary_->itemData(i).toInt();
+        if (val / 10 == metricId) {
+            comboPrimary_->setCurrentIndex(i);
+            break;
+        }
+    }
+    if (tabWidget_) {
+        tabWidget_->setCurrentIndex(1); // Switch to Live Graph Analyzer tab
+    }
+}
+
+void AllMetricsDialog::OnTableMetricDoubleClicked(int row, int col) {
+    Q_UNUSED(col);
+    if (row >= 0 && row < static_cast<int>(metricDefs_.size())) {
+        SelectMetricForChart(metricDefs_[row].metricId);
+    }
 }
 
 void AllMetricsDialog::SetupPacingTab(QTabWidget *tabs) {
@@ -554,6 +784,7 @@ void AllMetricsDialog::SetupDictionaryTab(QTabWidget *tabs) {
     metricsTable_->verticalHeader()->setVisible(false);
     metricsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     metricsTable_->setAlternatingRowColors(true);
+    connect(metricsTable_, &QTableWidget::cellDoubleClicked, this, &AllMetricsDialog::OnTableMetricDoubleClicked);
 
     // Populate official Intel PresentMon metric dictionary definitions
     metricDefs_ = {
@@ -700,6 +931,7 @@ void AllMetricsDialog::OnRefreshTimer() {
     lblPresentModeBadge_->setText(modeStr);
 
     UpdateDashboard(s);
+    UpdateLiveChart(s);
     UpdatePacing(s);
     UpdateLatency(s);
     UpdateGpu(s);
@@ -755,6 +987,41 @@ void AllMetricsDialog::UpdateDashboard(const PM_FULL_TELEMETRY_SNAPSHOT& s) {
     lblSyncOverviewSub_->setText(QString("Dropped: %1 | Tearing: %2")
         .arg(s.droppedFrames)
         .arg(s.allowsTearing ? "Allowed" : "No"));
+}
+
+void AllMetricsDialog::UpdateLiveChart(const PM_FULL_TELEMETRY_SNAPSHOT& s) {
+    if (!metricGraph_ || !comboPrimary_) return;
+
+    int pVal = comboPrimary_->currentData().toInt();
+    int pMetric = pVal / 10;
+    int pSub = pVal % 10;
+    double val1 = GetSnapshotMetricValue(pMetric, s, pSub);
+    metricGraph_->AddSamplePrimary(val1);
+
+    if (checkSecondary_ && checkSecondary_->isChecked() && comboSecondary_) {
+        int sVal = comboSecondary_->currentData().toInt();
+        int sMetric = sVal / 10;
+        int sSub = sVal % 10;
+        double val2 = GetSnapshotMetricValue(sMetric, s, sSub);
+        metricGraph_->AddSampleSecondary(val2);
+    }
+
+    const auto& prim = metricGraph_->GetPrimarySeries();
+    if (lblChartCur_) {
+        lblChartCur_->setText(QString("Current: %1 %2").arg(prim.currentValue, 0, 'f', 2).arg(prim.unit));
+    }
+    if (lblChartMin_) {
+        lblChartMin_->setText(QString("Min: %1 %2").arg(prim.minValue, 0, 'f', 2).arg(prim.unit));
+    }
+    if (lblChartMax_) {
+        lblChartMax_->setText(QString("Max: %1 %2").arg(prim.maxValue, 0, 'f', 2).arg(prim.unit));
+    }
+    if (lblChartAvg_) {
+        lblChartAvg_->setText(QString("Avg: %1 %2").arg(prim.avgValue, 0, 'f', 2).arg(prim.unit));
+    }
+    if (lblChartP99_) {
+        lblChartP99_->setText(QString("99th%% / 1%% Low: %1 %2").arg(prim.p99Value, 0, 'f', 2).arg(prim.unit));
+    }
 }
 
 void AllMetricsDialog::UpdatePacing(const PM_FULL_TELEMETRY_SNAPSHOT& s) {

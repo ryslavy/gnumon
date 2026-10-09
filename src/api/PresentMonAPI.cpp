@@ -838,7 +838,8 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(
     // Frame Rates
     double curFps = (hasFrame && frame.frameTimeNs > 0) ? (1'000'000'000.0 / static_cast<double>(frame.frameTimeNs)) : 0.0;
     pSnapshot->presentFps = curFps;
-    pSnapshot->appFps = curFps;
+    pSnapshot->appFps = coordinator->GetStatisticalMetric(PM_METRIC_APPLICATION_FPS, PM_STAT_AVG, 1000.0);
+    if (pSnapshot->appFps <= 0.0) pSnapshot->appFps = curFps;
     pSnapshot->displayedFps = coordinator->GetStatisticalMetric(PM_METRIC_DISPLAYED_FPS, PM_STAT_AVG, 1000.0);
     if (pSnapshot->displayedFps <= 0.0) pSnapshot->displayedFps = curFps;
     pSnapshot->fpsAvg = coordinator->GetStatisticalMetric(PM_METRIC_DISPLAYED_FPS, PM_STAT_AVG, 1000.0);
