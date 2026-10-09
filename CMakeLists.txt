@@ -153,6 +153,8 @@ if(Qt6_FOUND)
         src/gui/MetricsConfigDialog.h
         src/gui/SettingsDialog.cpp
         src/gui/SettingsDialog.h
+        src/gui/AllMetricsDialog.cpp
+        src/gui/AllMetricsDialog.h
         src/gui/PresentMonOverlay.cpp
         src/gui/PresentMonOverlay.h
     )
@@ -187,6 +189,9 @@ if(TARGET VkLayer_gnumon)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_gnumon.json
         DESTINATION ${CMAKE_INSTALL_DATADIR}/vulkan/explicit_layer.d
     )
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_gnumon.json
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/vulkan/implicit_layer.d
+    )
 endif()
 if(TARGET gnumon_gl)
     install(TARGETS gnumon_gl
@@ -198,6 +203,9 @@ install(DIRECTORY include/gnumon
 )
 install(FILES systemd/gnumond.service
     DESTINATION ${CMAKE_INSTALL_DATADIR}/systemd/user
+)
+install(FILES scripts/99-gnumon-input.rules
+    DESTINATION lib/udev/rules.d
 )
 install(PROGRAMS
     scripts/gnumon-run
@@ -218,6 +226,7 @@ set(CPACK_PACKAGE_CONTACT "https://github.com/ryslavy/gnumon")
 set(CPACK_GENERATOR "TGZ")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "gnumon team")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
 set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-or-later")
 set(CPACK_RPM_PACKAGE_GROUP "Development/Tools")
 include(CPack)

@@ -454,6 +454,107 @@ extern "C" {
 	PRESENTMON_API2_EXPORT PM_STATUS pmSetRecordingState(PM_SESSION_HANDLE handle, bool recording);
 	PRESENTMON_API2_EXPORT PM_STATUS pmGetRecordingState(PM_SESSION_HANDLE handle, bool* pRecording);
 
+	struct PM_FULL_TELEMETRY_SNAPSHOT
+	{
+		char processName[128];
+		uint32_t processId;
+		uint64_t swapChain;
+		int32_t graphicsRuntime;
+		int32_t presentMode;
+		uint32_t allowsTearing;
+		uint32_t syncInterval;
+		uint32_t frameType;
+		uint32_t droppedFrames;
+
+		// Frame Rates
+		double displayedFps;
+		double presentFps;
+		double appFps;
+		double fps1PercentLow;
+		double fps01PercentLow;
+		double fpsMin;
+		double fpsMax;
+		double fpsAvg;
+
+		// Frame Times (ms)
+		double cpuFrameTimeMs;
+		double displayedFrameTimeMs;
+		double presentedFrameTimeMs;
+		double cpuFrameTimeAvgMs;
+		double cpuFrameTime99pMs;
+		double inPresentApiMs;
+		double untilDisplayedMs;
+		double betweenPresentsMs;
+		double flipDelayMs;
+
+		// Latencies & Responsiveness (ms)
+		double pcLatencyMs;
+		double displayLatencyMs;
+		double clickToPhotonLatencyMs;
+		double allInputLatencyMs;
+		double renderPresentLatencyMs;
+		double animationErrorMs;
+		double animationTimeMs;
+
+		// CPU Telemetry
+		char cpuName[128];
+		int32_t cpuVendor;
+		uint32_t cpuCoreCount;
+		double cpuUtilizationPercent;
+		double cpuPackagePowerWatts;
+		double cpuPowerLimitWatts;
+		double cpuTemperatureC;
+		double cpuFrequencyMhz;
+		double cpuBusyMs;
+		double cpuWaitMs;
+		double perCoreUtilization[128];
+		double perCoreTemperature[128];
+
+		// GPU Telemetry
+		char gpuName[128];
+		int32_t gpuVendor;
+		double gpuUtilizationPercent;
+		double gpuRenderComputeUtilizationPercent;
+		double gpuMediaUtilizationPercent;
+		double gpuFrequencyMhz;
+		double gpuEffectiveFrequencyMhz;
+		double gpuPowerWatts;
+		double gpuSustainedPowerLimitWatts;
+		double gpuCardPowerWatts;
+		double gpuVoltageMv;
+		double gpuTemperatureEdgeC;
+		double gpuTemperatureHotspotC;
+		double gpuTemperatureVramC;
+		double gpuTemperatureVrC;
+		double gpuFanSpeedRpm;
+		double gpuFanSpeedPercent;
+		double gpuTimeMs;
+		double gpuBusyMs;
+		double gpuWaitMs;
+		uint32_t gpuPowerLimited;
+		uint32_t gpuTemperatureLimited;
+		uint32_t gpuCurrentLimited;
+		uint32_t gpuVoltageLimited;
+		uint32_t gpuUtilizationLimited;
+
+		// GPU VRAM
+		uint64_t vramTotalBytes;
+		uint64_t vramUsedBytes;
+		double vramUtilizationPercent;
+		double vramFrequencyMhz;
+		double vramEffectiveBandwidthGbs;
+		double vramMaxBandwidthGbs;
+		uint32_t vramPowerLimited;
+		uint32_t vramTemperatureLimited;
+
+		// PSO
+		uint32_t psoCompileCount;
+		double psoCompileTimeMs;
+		double psoCompileBusyPercent;
+	};
+
+	PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(PM_SESSION_HANDLE handle, uint32_t processId, PM_FULL_TELEMETRY_SNAPSHOT* pSnapshot);
+
 #ifdef __cplusplus
 }
 #endif

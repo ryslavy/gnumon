@@ -1,0 +1,2 @@
+# gnumon - Global evdev input hotkey access for current active desktop user
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"

@@ -15,6 +15,7 @@
 #endif
 #include "font_atlas.hpp"
 #include "vk_overlay_shaders.hpp"
+#include "../ipc/FrameRingBuffer.h"
 
 namespace gnumon::layer {
 
@@ -189,7 +190,8 @@ public:
                    double frameTimeMs, double latencyMs, double animErrorMs,
                    bool isRecording, int corner,
                    uint32_t waitSemCount, const VkSemaphore* pWaitSems,
-                   VkSemaphore* outSignalSem)
+                   VkSemaphore* outSignalSem,
+                   const ipc::TelemetrySnapshot* telem = nullptr)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!initialized_ || !device_) return false;
@@ -214,7 +216,7 @@ public:
         std::vector<OverlayVertex> verts;
         GenerateHudVertices(verts, sw, sh, corner,
                             presentFps, displayedFps, fps1PercentLow,
-                            frameTimeMs, latencyMs, animErrorMs, isRecording);
+                            frameTimeMs, latencyMs, animErrorMs, isRecording, telem);
 
         if (verts.empty() || imageIndex >= sd.vertexMapped.size() || !sd.vertexMapped[imageIndex]) {
             return false;
@@ -954,11 +956,13 @@ private:
     void GenerateHudVertices(std::vector<OverlayVertex>& verts, uint32_t sw, uint32_t sh, int corner,
                              double presentFps, double displayedFps, double fps1PercentLow,
                              double frameTimeMs, double latencyMs, double animErrorMs,
-                             bool isRecording)
+                             bool isRecording,
+                             const ipc::TelemetrySnapshot* telem = nullptr)
     {
+        bool hasTelem = (telem && telem->valid != 0);
         float uiScale = std::clamp(std::min(static_cast<float>(sw) / 1920.0f, static_cast<float>(sh) / 1080.0f), 0.85f, 2.0f);
         float cardW = 460.0f * uiScale;
-        float cardH = 205.0f * uiScale;
+        float cardH = (hasTelem ? 226.0f : 205.0f) * uiScale;
         float margin = 20.0f * uiScale;
 
         float cardX = margin;
@@ -1023,9 +1027,26 @@ private:
         snprintf(buf, sizeof(buf), "AnimErr: %.2f ms", animErrorMs);
         AddString(verts, buf, curX, r3_y, 0.80f * uiScale, 0.90f, 0.50f, 0.50f, 0.95f);
 
-        // --- ROW 4: Real-time Oscilloscope (Frametime Graph) ---
-        float gx = cardX + 12.0f * uiScale;
+        // --- ROW 4 (OPTIONAL): GPU & CPU Telemetry ---
         float gy = cardY + 76.0f * uiScale;
+        if (hasTelem) {
+            float r4_y = cardY + 76.0f * uiScale;
+            curX = padX;
+            snprintf(buf, sizeof(buf), "GPU: %.0f%% %.0fC %.0fW", telem->gpuUtil, telem->gpuTemp, telem->gpuPower);
+            curX += AddString(verts, buf, curX, r4_y, 0.78f * uiScale, 0.35f, 0.85f, 1.0f, 0.95f) + gapX;
+
+            snprintf(buf, sizeof(buf), "CPU: %.0f%% %.0fC %.0fW", telem->cpuUtil, telem->cpuTemp, telem->cpuPower);
+            curX += AddString(verts, buf, curX, r4_y, 0.78f * uiScale, 0.50f, 0.90f, 0.50f, 0.95f) + gapX;
+
+            if (telem->vramTotalGb > 0.1f) {
+                snprintf(buf, sizeof(buf), "VRAM: %.1fG", telem->vramUsedGb);
+                AddString(verts, buf, curX, r4_y, 0.78f * uiScale, 0.85f, 0.70f, 1.0f, 0.95f);
+            }
+            gy = cardY + 97.0f * uiScale;
+        }
+
+        // --- ROW 5: Real-time Oscilloscope (Frametime Graph) ---
+        float gx = cardX + 12.0f * uiScale;
         float gw = cardW - 24.0f * uiScale;
         float gh = 96.0f * uiScale;
 

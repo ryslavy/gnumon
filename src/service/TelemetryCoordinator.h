@@ -54,6 +54,7 @@ private:
     ipc::FrameRingConsumer frameConsumer_;
     uint32_t trackedPid_ = 0;
     bool recordingActive_ = false;
+    bool inGameOverlayEnabled_ = false;
 
     mutable std::mutex dataMutex_;
     control::GpuMetrics latestGpuMetrics_{};

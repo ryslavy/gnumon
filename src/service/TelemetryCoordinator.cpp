@@ -56,6 +56,8 @@ bool TelemetryCoordinator::StartTrackingProcess(uint32_t pid) {
         if (tgid > 0 && tgid != pid) {
             if (frameConsumer_.Open(tgid)) {
                 trackedPid_ = tgid;
+                if (recordingActive_) frameConsumer_.SetRecordingActive(true);
+                if (inGameOverlayEnabled_) frameConsumer_.SetOverlayEnabled(true);
                 return true;
             }
         }
@@ -63,7 +65,12 @@ bool TelemetryCoordinator::StartTrackingProcess(uint32_t pid) {
 
     trackedPid_ = pid;
     if (pid > 0) {
-        return frameConsumer_.Open(pid);
+        bool ok = frameConsumer_.Open(pid);
+        if (ok) {
+            if (recordingActive_) frameConsumer_.SetRecordingActive(true);
+            if (inGameOverlayEnabled_) frameConsumer_.SetOverlayEnabled(true);
+        }
+        return ok;
     }
     return false;
 }
@@ -130,9 +137,13 @@ bool TelemetryCoordinator::GetLatestFrame(ipc::FrameEvent& outEvent) {
             if (!active.empty()) target = active.front();
         }
         if (target > 0) {
-            frameConsumer_.Open(target);
-            if (recordingActive_) {
-                frameConsumer_.SetRecordingActive(true);
+            if (frameConsumer_.Open(target)) {
+                if (recordingActive_) {
+                    frameConsumer_.SetRecordingActive(true);
+                }
+                if (inGameOverlayEnabled_) {
+                    frameConsumer_.SetOverlayEnabled(true);
+                }
             }
         }
     }
@@ -166,9 +177,13 @@ bool TelemetryCoordinator::PopFrame(ipc::FrameEvent& outEvent) {
             if (!active.empty()) target = active.front();
         }
         if (target > 0) {
-            frameConsumer_.Open(target);
-            if (recordingActive_) {
-                frameConsumer_.SetRecordingActive(true);
+            if (frameConsumer_.Open(target)) {
+                if (recordingActive_) {
+                    frameConsumer_.SetRecordingActive(true);
+                }
+                if (inGameOverlayEnabled_) {
+                    frameConsumer_.SetOverlayEnabled(true);
+                }
             }
         }
     }
@@ -284,6 +299,22 @@ void TelemetryCoordinator::SampleAll() {
         std::lock_guard<std::mutex> lock(dataMutex_);
         latestGpuMetrics_ = gpu;
         latestCpuMetrics_ = cpu;
+
+        if (frameConsumer_.IsConnected()) {
+            ipc::TelemetrySnapshot snap{};
+            snap.gpuUtil = static_cast<float>(gpu.gpuUtilizationPercent);
+            snap.gpuTemp = static_cast<float>(gpu.temperatureEdgeC);
+            snap.gpuPower = static_cast<float>(gpu.powerWatts);
+            snap.gpuFreq = static_cast<float>(gpu.gpuFrequencyMhz);
+            snap.vramUsedGb = static_cast<float>(static_cast<double>(gpu.vramUsedBytes) / (1024.0 * 1024.0 * 1024.0));
+            snap.vramTotalGb = static_cast<float>(static_cast<double>(gpu.vramTotalBytes) / (1024.0 * 1024.0 * 1024.0));
+            snap.cpuUtil = static_cast<float>(cpu.cpuUtilizationPercent);
+            snap.cpuTemp = static_cast<float>(cpu.cpuTemperatureC);
+            snap.cpuPower = static_cast<float>(cpu.cpuPackagePowerWatts);
+            snap.cpuFreq = static_cast<float>(cpu.cpuFrequencyMhz);
+            snap.valid = 1;
+            frameConsumer_.WriteTelemetry(snap);
+        }
     }
 }
 
@@ -306,7 +337,17 @@ bool TelemetryCoordinator::ConsumeHotkeyToggle() {
 }
 
 bool TelemetryCoordinator::ConsumeInGameHudHotkeyToggle() {
-    return inputTracker_.ConsumeInGameHudHotkeyToggle();
+    bool triggered = inputTracker_.ConsumeInGameHudHotkeyToggle();
+    if (!triggered) {
+        std::lock_guard<std::mutex> lock(dataMutex_);
+        if (frameConsumer_.IsConnected()) {
+            bool ringHud = frameConsumer_.IsOverlayEnabled();
+            if (ringHud != inGameOverlayEnabled_) {
+                triggered = true;
+            }
+        }
+    }
+    return triggered;
 }
 
 bool TelemetryCoordinator::ConsumeOverlayHotkeyToggle() {
@@ -314,7 +355,17 @@ bool TelemetryCoordinator::ConsumeOverlayHotkeyToggle() {
 }
 
 bool TelemetryCoordinator::ConsumeRecordHotkeyToggle() {
-    return inputTracker_.ConsumeRecordHotkeyToggle();
+    bool triggered = inputTracker_.ConsumeRecordHotkeyToggle();
+    if (!triggered) {
+        std::lock_guard<std::mutex> lock(dataMutex_);
+        if (frameConsumer_.IsConnected()) {
+            bool ringRec = frameConsumer_.IsRecordingActive();
+            if (ringRec != recordingActive_) {
+                triggered = true;
+            }
+        }
+    }
+    return triggered;
 }
 
 bool TelemetryCoordinator::ConsumeMiniHudHotkeyToggle() {
@@ -329,12 +380,28 @@ void TelemetryCoordinator::SetHotkeys(const std::string& inGameHud, const std::s
 
 void TelemetryCoordinator::SetInGameOverlayEnabled(bool enabled) {
     std::lock_guard<std::mutex> lock(dataMutex_);
-    frameConsumer_.SetOverlayEnabled(enabled);
+    inGameOverlayEnabled_ = enabled;
+    if (!frameConsumer_.IsConnected()) {
+        uint32_t target = trackedPid_;
+        if (target == 0) {
+            auto active = common::GetActiveRingPids();
+            if (!active.empty()) target = active.front();
+        }
+        if (target > 0) {
+            frameConsumer_.Open(target);
+            if (recordingActive_) {
+                frameConsumer_.SetRecordingActive(true);
+            }
+        }
+    }
+    if (frameConsumer_.IsConnected()) {
+        frameConsumer_.SetOverlayEnabled(enabled);
+    }
 }
 
 bool TelemetryCoordinator::IsInGameOverlayEnabled() const {
     std::lock_guard<std::mutex> lock(dataMutex_);
-    return frameConsumer_.IsOverlayEnabled();
+    return inGameOverlayEnabled_;
 }
 
 } // namespace gnumon::service

@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libvulkan-dev \
     libdrm-dev \
+    libgl-dev \
     wayland-protocols \
     libwayland-dev \
     qt6-base-dev \

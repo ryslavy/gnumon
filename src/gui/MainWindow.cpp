@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <cstring>
 #include "../common/ProcUtils.h"
 
 namespace gnumon::gui {
@@ -33,6 +34,10 @@ struct QueryPayload {
     double displayedFps = 0.0;
     double frameTimeMs = 0.0;
     double gpuTimeMs = 0.0;
+    double displayLatency = 0.0;
+    double animError = 0.0;
+    double inPresentApiMs = 0.0;
+    uint32_t droppedFrames = 0;
 };
 
 struct FramePayload {
@@ -51,6 +56,63 @@ struct FramePayload {
     double cpuUtil = 0.0;
     double cpuPower = 0.0;
 };
+
+namespace {
+bool FilesDiffer(const std::filesystem::path& a, const std::filesystem::path& b) {
+    std::error_code ec;
+    if (std::filesystem::file_size(a, ec) != std::filesystem::file_size(b, ec) || ec) return true;
+    std::ifstream fa(a, std::ios::binary), fb(b, std::ios::binary);
+    if (!fa || !fb) return true;
+    std::vector<char> ba(65536), bb(65536);
+    while (fa && fb) {
+        fa.read(ba.data(), ba.size());
+        fb.read(bb.data(), bb.size());
+        if (fa.gcount() != fb.gcount() || std::memcmp(ba.data(), bb.data(), fa.gcount()) != 0) return true;
+    }
+    return false;
+}
+
+// If the Vulkan layer is installed but differs from the one shipped with this build/AppImage,
+// overwrite every installed copy so games load the current layer. Returns true if updated.
+bool RefreshInstalledLayerIfOutdated(const std::filesystem::path& home) {
+    std::error_code ec;
+    const std::filesystem::path installed = home / ".local/lib/gnumon/libVkLayer_gnumon.so";
+    if (!std::filesystem::exists(installed, ec)) return false;
+
+    const std::filesystem::path exeDir = std::filesystem::canonical("/proc/self/exe", ec).parent_path();
+    std::vector<std::filesystem::path> candidates = {
+        exeDir / "libVkLayer_gnumon.so",
+        exeDir / "../lib/libVkLayer_gnumon.so",
+        exeDir / "../lib64/libVkLayer_gnumon.so",
+        exeDir / "../build-container/libVkLayer_gnumon.so",
+        exeDir / "../build-host/libVkLayer_gnumon.so",
+    };
+    // Pick the newest existing candidate that is not the installed file itself
+    std::filesystem::path src;
+    std::filesystem::file_time_type srcTime{};
+    for (const auto& c : candidates) {
+        if (!std::filesystem::exists(c, ec) || std::filesystem::equivalent(c, installed, ec)) continue;
+        auto t = std::filesystem::last_write_time(c, ec);
+        if (src.empty() || t > srcTime) { src = c; srcTime = t; }
+    }
+    if (src.empty() || !FilesDiffer(src, installed)) return false;
+
+    const std::filesystem::path targets[] = {
+        installed,
+        home / ".local/share/vulkan/implicit_layer.d/libVkLayer_gnumon.so",
+        home / ".local/share/vulkan/explicit_layer.d/libVkLayer_gnumon.so",
+        home / ".var/app/com.valvesoftware.Steam/.local/share/vulkan/implicit_layer.d/libVkLayer_gnumon.so",
+    };
+    bool updated = false;
+    for (const auto& t : targets) {
+        if (t != installed && !std::filesystem::exists(t, ec)) continue;
+        // Remove first so running games keep their mapped (old) inode instead of crashing
+        std::filesystem::remove(t, ec);
+        if (std::filesystem::copy_file(src, t, std::filesystem::copy_options::overwrite_existing, ec)) updated = true;
+    }
+    return updated;
+}
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -79,6 +141,10 @@ MainWindow::MainWindow(QWidget *parent)
             { PM_METRIC_DISPLAYED_FPS, PM_STAT_AVG, 0, 0, offsetof(QueryPayload, displayedFps), sizeof(double) },
             { PM_METRIC_CPU_FRAME_TIME, PM_STAT_NONE, 0, 0, offsetof(QueryPayload, frameTimeMs), sizeof(double) },
             { PM_METRIC_GPU_TIME, PM_STAT_NONE, 0, 0, offsetof(QueryPayload, gpuTimeMs), sizeof(double) },
+            { PM_METRIC_DISPLAY_LATENCY, PM_STAT_AVG, 0, 0, offsetof(QueryPayload, displayLatency), sizeof(double) },
+            { PM_METRIC_ANIMATION_ERROR, PM_STAT_AVG, 0, 0, offsetof(QueryPayload, animError), sizeof(double) },
+            { PM_METRIC_IN_PRESENT_API, PM_STAT_NONE, 0, 0, offsetof(QueryPayload, inPresentApiMs), sizeof(double) },
+            { PM_METRIC_DROPPED_FRAMES, PM_STAT_NONE, 0, 0, offsetof(QueryPayload, droppedFrames), sizeof(uint32_t) },
         };
 
         pmRegisterDynamicQuery(session_, &query_, elements.data(), elements.size(), static_cast<double>(config_.averagingWindowMs), 0.0);
@@ -118,6 +184,10 @@ MainWindow::MainWindow(QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    if (allMetricsDialog_) {
+        delete allMetricsDialog_;
+        allMetricsDialog_ = nullptr;
+    }
     if (overlay_) {
         delete overlay_;
         overlay_ = nullptr;
@@ -140,24 +210,36 @@ void MainWindow::SetupUi() {
     auto *centralWidget = new QWidget(this);
     setCentralWidget(centralWidget);
     auto *mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setSpacing(12);
+    mainLayout->setSpacing(10);
 
-    // --- Top Control Toolbar ---
+    // --- Top Control Toolbar: 2 Clean Rows ---
     topContainer_ = new QWidget(this);
-    auto *topLayout = new QHBoxLayout(topContainer_);
+    auto *topLayout = new QVBoxLayout(topContainer_);
     topLayout->setContentsMargins(0, 0, 0, 0);
+    topLayout->setSpacing(6);
+
+    // Row 1: Target Process + Refresh + All Metrics + Settings + Layer
+    auto *row1 = new QWidget(topContainer_);
+    auto *row1Layout = new QHBoxLayout(row1);
+    row1Layout->setContentsMargins(0, 0, 0, 0);
+    row1Layout->setSpacing(8);
 
     auto *lblProc = new QLabel("Target Process:", this);
-    lblProc->setStyleSheet("font-weight: bold;");
+    lblProc->setStyleSheet("font-weight: bold; font-size: 12px;");
     comboProcess_ = new QComboBox(this);
-    comboProcess_->setMinimumWidth(240);
+    comboProcess_->setMinimumWidth(280);
     connect(comboProcess_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::OnProcessChanged);
 
     btnRefreshProcess_ = new QPushButton("Refresh", this);
     connect(btnRefreshProcess_, &QPushButton::clicked, this, &MainWindow::OnRefreshProcesses);
 
+    btnFullMetrics_ = new QPushButton("📊 All PresentMon Metrics...", this);
+    btnFullMetrics_->setToolTip("Open comprehensive PresentMon 2.x Telemetry Inspector with all 80+ metrics, graphs, and limits");
+    btnFullMetrics_->setStyleSheet("padding: 5px 14px; font-weight: bold; background-color: #00838f; color: white; border: 1px solid #00b4d8; border-radius: 4px;");
+    connect(btnFullMetrics_, &QPushButton::clicked, this, &MainWindow::OnOpenFullMetrics);
+
     btnSettings_ = new QPushButton("Settings...", this);
-    btnSettings_->setStyleSheet("padding: 4px 10px; font-weight: bold; background-color: #263238; border: 1px solid #455a64; border-radius: 4px;");
+    btnSettings_->setStyleSheet("padding: 5px 12px; font-weight: bold; background-color: #263238; border: 1px solid #455a64; border-radius: 4px;");
     connect(btnSettings_, &QPushButton::clicked, this, &MainWindow::OnConfigureSettings);
 
     const char* homeDir = std::getenv("HOME");
@@ -165,18 +247,36 @@ void MainWindow::SetupUi() {
     if (homeDir) {
         layerInstalled = std::filesystem::exists(std::filesystem::path(homeDir) / ".local/share/vulkan/implicit_layer.d/VkLayer_gnumon.json") &&
                          std::filesystem::exists(std::filesystem::path(homeDir) / ".local/lib/gnumon/libVkLayer_gnumon.so");
+        if (layerInstalled && RefreshInstalledLayerIfOutdated(std::filesystem::path(homeDir))) {
+            std::cerr << "[gnumon-gui] Installed Vulkan layer was outdated and has been updated." << std::endl;
+        }
     }
     btnInstallLayer_ = new QPushButton(layerInstalled ? "Uninstall Layer" : "Install Layer", this);
     if (layerInstalled) {
-        btnInstallLayer_->setStyleSheet("background-color: #37474f; color: #ffb74d; font-weight: bold;");
+        btnInstallLayer_->setStyleSheet("background-color: #37474f; color: #ffb74d; font-weight: bold; padding: 5px 12px; border-radius: 4px;");
     }
     connect(btnInstallLayer_, &QPushButton::clicked, this, &MainWindow::OnToggleLayerInstall);
+
+    row1Layout->addWidget(lblProc);
+    row1Layout->addWidget(comboProcess_);
+    row1Layout->addWidget(btnRefreshProcess_);
+    row1Layout->addStretch();
+    row1Layout->addWidget(btnFullMetrics_);
+    row1Layout->addWidget(btnSettings_);
+    row1Layout->addWidget(btnInstallLayer_);
+    topLayout->addWidget(row1);
+
+    // Row 2: Overlays and Capture Actions
+    auto *row2 = new QWidget(topContainer_);
+    auto *row2Layout = new QHBoxLayout(row2);
+    row2Layout->setContentsMargins(0, 0, 0, 0);
+    row2Layout->setSpacing(8);
 
     btnInGameOverlay_ = new QPushButton("In-Game HUD (F9)", this);
     btnInGameOverlay_->setToolTip("Toggle real-time swapchain HUD directly inside the game window");
     connect(btnInGameOverlay_, &QPushButton::clicked, this, &MainWindow::OnToggleInGameOverlay);
 
-    btnOverlay_ = new QPushButton("Overlay (F11)", this);
+    btnOverlay_ = new QPushButton("Desktop Overlay (F11)", this);
     connect(btnOverlay_, &QPushButton::clicked, this, &MainWindow::OnToggleOverlay);
 
     btnMiniOverlay_ = new QPushButton("Mini HUD (F12)", this);
@@ -187,20 +287,16 @@ void MainWindow::SetupUi() {
     connect(btnOpenCaptures_, &QPushButton::clicked, this, &MainWindow::OnOpenCapturesFolder);
 
     btnRecord_ = new QPushButton("Start Capture (CSV)", this);
-    btnRecord_->setStyleSheet("padding: 6px 16px; font-weight: bold; background-color: #2e7d32; color: white; border-radius: 4px;");
+    btnRecord_->setStyleSheet("padding: 6px 18px; font-weight: bold; background-color: #2e7d32; color: white; border-radius: 4px;");
     connect(btnRecord_, &QPushButton::clicked, this, &MainWindow::OnToggleRecording);
 
-    topLayout->addWidget(lblProc);
-    topLayout->addWidget(comboProcess_);
-    topLayout->addWidget(btnRefreshProcess_);
-    topLayout->addWidget(btnSettings_);
-    topLayout->addWidget(btnInstallLayer_);
-    topLayout->addWidget(btnInGameOverlay_);
-    topLayout->addWidget(btnOverlay_);
-    topLayout->addWidget(btnMiniOverlay_);
-    topLayout->addStretch();
-    topLayout->addWidget(btnOpenCaptures_);
-    topLayout->addWidget(btnRecord_);
+    row2Layout->addWidget(btnInGameOverlay_);
+    row2Layout->addWidget(btnOverlay_);
+    row2Layout->addWidget(btnMiniOverlay_);
+    row2Layout->addStretch();
+    row2Layout->addWidget(btnOpenCaptures_);
+    row2Layout->addWidget(btnRecord_);
+    topLayout->addWidget(row2);
 
     mainLayout->addWidget(topContainer_);
 
@@ -212,8 +308,14 @@ void MainWindow::SetupUi() {
     graphLayout->addWidget(graphWidget_);
     mainLayout->addWidget(graphGroup);
 
-    // --- GPU Group ---
-    auto *gpuGroup = new QGroupBox("GPU Telemetry", this);
+    // --- Hardware Telemetry (Side-by-Side GPU & CPU) ---
+    auto *hwContainer = new QWidget(this);
+    auto *hwLayout = new QHBoxLayout(hwContainer);
+    hwLayout->setContentsMargins(0, 0, 0, 0);
+    hwLayout->setSpacing(10);
+
+    // GPU Group
+    auto *gpuGroup = new QGroupBox("GPU Telemetry", hwContainer);
     gpuGroup_ = gpuGroup;
     auto *gpuLayout = new QGridLayout(gpuGroup);
 
@@ -229,6 +331,7 @@ void MainWindow::SetupUi() {
     barGpuUtil_->setRange(0, 100);
     barGpuUtil_->setValue(0);
     barGpuUtil_->setTextVisible(false);
+    barGpuUtil_->setFixedHeight(6);
 
     gpuLayout->addWidget(lblGpuName_, 0, 0, 1, 3);
     gpuLayout->addWidget(lblGpuPower_, 1, 0);
@@ -238,10 +341,10 @@ void MainWindow::SetupUi() {
     gpuLayout->addWidget(lblGpuVram_, 2, 1);
     gpuLayout->addWidget(barGpuUtil_, 3, 0, 1, 3);
 
-    mainLayout->addWidget(gpuGroup);
+    hwLayout->addWidget(gpuGroup);
 
-    // --- CPU Group ---
-    auto *cpuGroup = new QGroupBox("CPU Telemetry", this);
+    // CPU Group
+    auto *cpuGroup = new QGroupBox("CPU Telemetry", hwContainer);
     cpuGroup_ = cpuGroup;
     auto *cpuLayout = new QGridLayout(cpuGroup);
 
@@ -256,6 +359,11 @@ void MainWindow::SetupUi() {
     barCpuUtil_->setRange(0, 100);
     barCpuUtil_->setValue(0);
     barCpuUtil_->setTextVisible(false);
+    barCpuUtil_->setFixedHeight(6);
+    barCpuUtil_->setStyleSheet(
+        "QProgressBar { background-color: #101216; border: none; border-radius: 2px; }"
+        "QProgressBar::chunk { background-color: #81c784; border-radius: 2px; }"
+    );
 
     cpuLayout->addWidget(lblCpuName_, 0, 0, 1, 3);
     cpuLayout->addWidget(lblCpuPower_, 1, 0);
@@ -264,7 +372,30 @@ void MainWindow::SetupUi() {
     cpuLayout->addWidget(lblCpuUtil_, 2, 0);
     cpuLayout->addWidget(barCpuUtil_, 3, 0, 1, 3);
 
-    mainLayout->addWidget(cpuGroup);
+    hwLayout->addWidget(cpuGroup);
+    mainLayout->addWidget(hwContainer);
+
+    // --- Latency, Pacing & Smoothness Summary Card ---
+    latencyGroup_ = new QGroupBox("Latency, Frame Pacing & Smoothness", this);
+    auto *latLayout = new QHBoxLayout(latencyGroup_);
+    latLayout->setContentsMargins(10, 8, 10, 8);
+
+    lblLatencySummary_ = new QLabel("PC Latency: 0.0 ms | Display Latency: 0.0 ms", latencyGroup_);
+    lblLatencySummary_->setStyleSheet("font-weight: bold; color: #00e5ff;");
+
+    lblAnimErrorSummary_ = new QLabel("Animation Error: 0.00 ms (Fluid Pacing)", latencyGroup_);
+    lblAnimErrorSummary_->setStyleSheet("font-weight: bold; color: #00e676;");
+
+    lblPacingSummary_ = new QLabel("In Present API: 0.00 ms | Dropped Frames: 0", latencyGroup_);
+    lblPacingSummary_->setStyleSheet("color: #b0bec5; font-family: monospace;");
+
+    latLayout->addWidget(lblLatencySummary_);
+    latLayout->addStretch();
+    latLayout->addWidget(lblAnimErrorSummary_);
+    latLayout->addStretch();
+    latLayout->addWidget(lblPacingSummary_);
+
+    mainLayout->addWidget(latencyGroup_);
 
     // --- Status Bar ---
     lblStatus_ = new QLabel("Status: Monitoring idle", this);
@@ -671,6 +802,9 @@ void MainWindow::OnProcessChanged(int index) {
     if (overlay_) {
         overlay_->SetTargetProcess(trackedPid_, comboProcess_->itemText(index).toStdString());
     }
+    if (allMetricsDialog_) {
+        allMetricsDialog_->SetTargetProcess(trackedPid_);
+    }
 }
 
 void MainWindow::OnPollTimer() {
@@ -695,12 +829,21 @@ void MainWindow::OnPollTimer() {
 
     if (!query_) return;
 
-    if (trackedPid_ == 0) {
+    if (trackedPid_ == 0 || (comboProcess_->currentIndex() == 0)) {
         auto activePids = common::GetActiveRingPids();
         if (!activePids.empty()) {
-            trackedPid_ = activePids.front();
-            if (session_) {
-                pmStartTrackingProcess(session_, trackedPid_);
+            uint32_t activePid = activePids.front();
+            if (activePid != trackedPid_) {
+                trackedPid_ = activePid;
+                if (session_) {
+                    pmStartTrackingProcess(session_, trackedPid_);
+                    if (isRecording_) {
+                        pmSetRecordingState(session_, true);
+                    }
+                }
+                if (allMetricsDialog_) {
+                    allMetricsDialog_->SetTargetProcess(trackedPid_);
+                }
             }
         }
     }
@@ -723,6 +866,25 @@ void MainWindow::OnPollTimer() {
         lblCpuFreq_->setText(QString("Clock: %1 MHz").arg(data.cpuFreq, 0, 'f', 0));
         lblCpuUtil_->setText(QString("Utilization: %1 %").arg(data.cpuUtil, 0, 'f', 1));
         barCpuUtil_->setValue(static_cast<int>(data.cpuUtil));
+
+        if (lblLatencySummary_) {
+            lblLatencySummary_->setText(QString("PC Latency: %1 ms | Display Latency: %2 ms")
+                .arg(data.displayLatency, 0, 'f', 1)
+                .arg(data.displayLatency, 0, 'f', 1));
+        }
+        if (lblAnimErrorSummary_) {
+            lblAnimErrorSummary_->setText(QString("Animation Error: %1 ms (%2)")
+                .arg(data.animError, 0, 'f', 2)
+                .arg(data.animError < 0.5 ? "Fluid Pacing" : "Pacing Jitter"));
+            lblAnimErrorSummary_->setStyleSheet(data.animError < 0.5
+                ? "font-weight: bold; color: #00e676;"
+                : "font-weight: bold; color: #ffd54f;");
+        }
+        if (lblPacingSummary_) {
+            lblPacingSummary_->setText(QString("In Present API: %1 ms | Dropped: %2")
+                .arg(data.inPresentApiMs, 0, 'f', 2)
+                .arg(data.droppedFrames));
+        }
 
         // Update real-time Frametime & FPS graph
         if (data.frameTimeMs > 0.0) {
@@ -939,6 +1101,17 @@ void MainWindow::OnToggleMiniOverlay() {
         resize(820, 680);
         show();
     }
+}
+
+void MainWindow::OnOpenFullMetrics() {
+    if (!allMetricsDialog_) {
+        allMetricsDialog_ = new AllMetricsDialog(session_, trackedPid_, this);
+    } else {
+        allMetricsDialog_->SetTargetProcess(trackedPid_);
+    }
+    allMetricsDialog_->show();
+    allMetricsDialog_->raise();
+    allMetricsDialog_->activateWindow();
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event) {

@@ -11,5 +11,13 @@ int main(int argc, char *argv[]) {
     gnumon::gui::MainWindow window;
     window.show();
 
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--metrics" || arg == "--full" || arg == "--inspector") {
+            window.OnOpenFullMetrics();
+            break;
+        }
+    }
+
     return app.exec();
 }

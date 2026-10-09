@@ -35,6 +35,20 @@ struct alignas(64) FrameEvent {
     uint32_t frameType = 2;          // PM_FRAME_TYPE_APPLICATION (2), AMD_AFMF (100), INTEL_XEFG (50)
 };
 
+struct alignas(64) TelemetrySnapshot {
+    float gpuUtil = 0.0f;
+    float gpuTemp = 0.0f;
+    float gpuPower = 0.0f;
+    float gpuFreq = 0.0f;
+    float vramUsedGb = 0.0f;
+    float vramTotalGb = 0.0f;
+    float cpuUtil = 0.0f;
+    float cpuTemp = 0.0f;
+    float cpuPower = 0.0f;
+    float cpuFreq = 0.0f;
+    uint32_t valid = 0;
+};
+
 struct alignas(64) SharedRingHeader {
     std::atomic<uint64_t> writeIndex{0};
     char pad1[64 - sizeof(std::atomic<uint64_t>)];
@@ -43,6 +57,7 @@ struct alignas(64) SharedRingHeader {
     uint32_t processId = 0;
     uint32_t magic = 0x474E554D; // "GNUM"
     std::atomic<uint32_t> controlFlags{0}; // Bit 0: RecordingActive, Bit 1: OverlayEnabled
+    TelemetrySnapshot telemetry{};
     FrameEvent events[RING_BUFFER_CAPACITY];
 };
 
@@ -113,6 +128,12 @@ public:
         if (!ring_) return;
         if (enabled) ring_->controlFlags.fetch_or(2, std::memory_order_release);
         else ring_->controlFlags.fetch_and(~2, std::memory_order_release);
+    }
+
+    bool ReadTelemetry(TelemetrySnapshot& out) const {
+        if (!ring_) return false;
+        out = ring_->telemetry;
+        return out.valid != 0;
     }
 
     void Close() {
@@ -215,6 +236,11 @@ public:
 
     bool IsOverlayEnabled() const {
         return ring_ && (ring_->controlFlags.load(std::memory_order_acquire) & 2);
+    }
+
+    void WriteTelemetry(const TelemetrySnapshot& snap) {
+        if (!ring_) return;
+        ring_->telemetry = snap;
     }
 
 private:

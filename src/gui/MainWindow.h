@@ -11,6 +11,7 @@
 #include "FrametimeGraphWidget.h"
 #include "MetricsConfigDialog.h"
 #include "SettingsDialog.h"
+#include "AllMetricsDialog.h"
 #include "AppConfig.h"
 #include "PresentMonOverlay.h"
 
@@ -26,6 +27,9 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+
+public slots:
+    void OnOpenFullMetrics();
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -70,6 +74,8 @@ private:
     QPushButton *btnMiniOverlay_ = nullptr;
     QPushButton *btnOpenCaptures_ = nullptr;
     QPushButton *btnRecord_ = nullptr;
+    QPushButton *btnFullMetrics_ = nullptr;
+    AllMetricsDialog *allMetricsDialog_ = nullptr;
     QString currentCapturePath_;
     QWidget *topContainer_ = nullptr;
     FrametimeGraphWidget *graphWidget_ = nullptr;
@@ -91,6 +97,11 @@ private:
     QLabel *lblCpuTemp_ = nullptr;
     QLabel *lblCpuFreq_ = nullptr;
     QProgressBar *barCpuUtil_ = nullptr;
+
+    QWidget *latencyGroup_ = nullptr;
+    QLabel *lblLatencySummary_ = nullptr;
+    QLabel *lblAnimErrorSummary_ = nullptr;
+    QLabel *lblPacingSummary_ = nullptr;
 
     QLabel *lblStatus_ = nullptr;
     bool isRecording_ = false;

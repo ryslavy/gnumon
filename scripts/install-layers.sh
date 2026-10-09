@@ -14,7 +14,10 @@ elif [ -f "$SOURCE_DIR/lib/libVkLayer_gnumon.so" ]; then
 elif [ -f "$SOURCE_DIR/usr/lib/libVkLayer_gnumon.so" ]; then
     LIB_DIR="$SOURCE_DIR/usr/lib"
     BIN_DIR="$SOURCE_DIR/usr/bin"
-elif [ -f "$SOURCE_DIR/build-container/libVkLayer_gnumon.so" ]; then
+elif [ -f "$SOURCE_DIR/build-container/libVkLayer_gnumon.so" ] && \
+     { [ ! -f "$SOURCE_DIR/build-host/libVkLayer_gnumon.so" ] || \
+       [ ! "$SOURCE_DIR/build-host/libVkLayer_gnumon.so" -nt "$SOURCE_DIR/build-container/libVkLayer_gnumon.so" ]; }; then
+    # Prefer the GLIBC-portable container build only when it is not older than the host build
     LIB_DIR="$SOURCE_DIR/build-container"
     BIN_DIR="$SOURCE_DIR/build-host"
 elif [ -f "$SOURCE_DIR/build-host/libVkLayer_gnumon.so" ]; then

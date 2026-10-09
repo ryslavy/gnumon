@@ -6,6 +6,8 @@
 #include <memory>
 #include <vector>
 #include <iostream>
+#include <algorithm>
+#include <fstream>
 
 struct PM_SESSION {
     std::unique_ptr<gnumon::service::TelemetryCoordinator> coordinator;
@@ -792,6 +794,157 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetRecordingState(PM_SESSION_HANDLE handle, b
         return PM_STATUS_SUCCESS;
     }
     return PM_STATUS_SERVICE_ERROR;
+}
+
+PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(
+    PM_SESSION_HANDLE handle,
+    uint32_t processId,
+    PM_FULL_TELEMETRY_SNAPSHOT* pSnapshot)
+{
+    if (!handle || !pSnapshot) return PM_STATUS_BAD_ARGUMENT;
+    auto* coordinator = handle->coordinator.get();
+    if (!coordinator) return PM_STATUS_SERVICE_ERROR;
+
+    coordinator->SampleAll();
+    auto gpu = coordinator->GetLatestGpuMetrics();
+    auto cpu = coordinator->GetLatestCpuMetrics();
+    gnumon::ipc::FrameEvent frame{};
+    bool hasFrame = coordinator->GetLatestFrame(frame);
+
+    std::memset(pSnapshot, 0, sizeof(PM_FULL_TELEMETRY_SNAPSHOT));
+
+    // Process & Runtime info
+    pSnapshot->processId = (processId > 0) ? processId : (hasFrame ? frame.processId : 0);
+    if (pSnapshot->processId > 0) {
+        std::string commPath = "/proc/" + std::to_string(pSnapshot->processId) + "/comm";
+        std::ifstream commFile(commPath);
+        std::string comm;
+        if (commFile.is_open() && std::getline(commFile, comm)) {
+            std::strncpy(pSnapshot->processName, comm.c_str(), sizeof(pSnapshot->processName) - 1);
+        }
+    }
+    if (pSnapshot->processName[0] == '\0') {
+        std::strncpy(pSnapshot->processName, "Active Game / App", sizeof(pSnapshot->processName) - 1);
+    }
+
+    pSnapshot->swapChain = hasFrame ? frame.swapChain : 0;
+    pSnapshot->graphicsRuntime = PM_GRAPHICS_RUNTIME_VULKAN;
+    pSnapshot->presentMode = hasFrame ? static_cast<int32_t>(frame.presentMode) : PM_PRESENT_MODE_COMPOSED_FLIP;
+    pSnapshot->allowsTearing = 0;
+    pSnapshot->syncInterval = 1;
+    pSnapshot->frameType = hasFrame ? static_cast<PM_FRAME_TYPE>(frame.frameType) : PM_FRAME_TYPE_APPLICATION;
+    pSnapshot->droppedFrames = hasFrame ? frame.dropped : 0;
+
+    // Frame Rates
+    double curFps = (hasFrame && frame.frameTimeNs > 0) ? (1'000'000'000.0 / static_cast<double>(frame.frameTimeNs)) : 0.0;
+    pSnapshot->presentFps = curFps;
+    pSnapshot->appFps = curFps;
+    pSnapshot->displayedFps = coordinator->GetStatisticalMetric(PM_METRIC_DISPLAYED_FPS, PM_STAT_AVG, 1000.0);
+    if (pSnapshot->displayedFps <= 0.0) pSnapshot->displayedFps = curFps;
+    pSnapshot->fpsAvg = coordinator->GetStatisticalMetric(PM_METRIC_DISPLAYED_FPS, PM_STAT_AVG, 1000.0);
+    if (pSnapshot->fpsAvg <= 0.0) pSnapshot->fpsAvg = curFps;
+    pSnapshot->fps1PercentLow = coordinator->GetStatisticalMetric(PM_METRIC_DISPLAYED_FPS, PM_STAT_PERCENTILE_01, 1000.0);
+    pSnapshot->fps01PercentLow = coordinator->GetStatisticalMetric(PM_METRIC_DISPLAYED_FPS, PM_STAT_MIN, 1000.0);
+    pSnapshot->fpsMin = coordinator->GetStatisticalMetric(PM_METRIC_DISPLAYED_FPS, PM_STAT_MIN, 1000.0);
+    pSnapshot->fpsMax = coordinator->GetStatisticalMetric(PM_METRIC_DISPLAYED_FPS, PM_STAT_MAX, 1000.0);
+
+    // Frame Times
+    double curFtMs = hasFrame ? (static_cast<double>(frame.frameTimeNs) / 1'000'000.0) : 0.0;
+    pSnapshot->cpuFrameTimeMs = curFtMs;
+    pSnapshot->displayedFrameTimeMs = curFtMs;
+    pSnapshot->presentedFrameTimeMs = curFtMs;
+    pSnapshot->cpuFrameTimeAvgMs = coordinator->GetStatisticalMetric(PM_METRIC_CPU_FRAME_TIME, PM_STAT_AVG, 1000.0);
+    if (pSnapshot->cpuFrameTimeAvgMs <= 0.0) pSnapshot->cpuFrameTimeAvgMs = curFtMs;
+    pSnapshot->cpuFrameTime99pMs = coordinator->GetStatisticalMetric(PM_METRIC_CPU_FRAME_TIME, PM_STAT_PERCENTILE_99, 1000.0);
+    pSnapshot->inPresentApiMs = hasFrame ? (static_cast<double>(frame.presentDurationNs) / 1'000'000.0) : 0.0;
+    pSnapshot->untilDisplayedMs = (hasFrame && frame.displayTimestampNs >= frame.presentStartTimestampNs)
+        ? (static_cast<double>(frame.displayTimestampNs - frame.presentStartTimestampNs) / 1'000'000.0) : 0.0;
+    pSnapshot->betweenPresentsMs = curFtMs;
+    pSnapshot->flipDelayMs = 0.0;
+
+    // Latencies
+    pSnapshot->pcLatencyMs = coordinator->GetStatisticalMetric(PM_METRIC_PC_LATENCY, PM_STAT_AVG, 1000.0);
+    if (pSnapshot->pcLatencyMs <= 0.0 && hasFrame && frame.displayTimestampNs >= frame.cpuStartTimestampNs && frame.cpuStartTimestampNs > 0) {
+        pSnapshot->pcLatencyMs = static_cast<double>(frame.displayTimestampNs - frame.cpuStartTimestampNs) / 1'000'000.0;
+    }
+    pSnapshot->displayLatencyMs = pSnapshot->pcLatencyMs;
+    uint64_t lastClick = coordinator->GetLastClickTimestampNs();
+    pSnapshot->clickToPhotonLatencyMs = (hasFrame && lastClick > 0 && frame.presentStartTimestampNs > lastClick)
+        ? (static_cast<double>(frame.presentStartTimestampNs - lastClick) / 1'000'000.0) : 0.0;
+    pSnapshot->allInputLatencyMs = pSnapshot->clickToPhotonLatencyMs;
+    pSnapshot->renderPresentLatencyMs = hasFrame ? (static_cast<double>(frame.gpuDurationNs + frame.presentDurationNs) / 1'000'000.0) : 0.0;
+    pSnapshot->animationErrorMs = coordinator->GetStatisticalMetric(PM_METRIC_ANIMATION_ERROR, PM_STAT_AVG, 1000.0);
+    pSnapshot->animationTimeMs = hasFrame ? (static_cast<double>(frame.cpuStartTimestampNs) / 1'000'000.0) : 0.0;
+
+    // CPU Telemetry
+    std::strncpy(pSnapshot->cpuName, cpu.cpuName.c_str(), sizeof(pSnapshot->cpuName) - 1);
+    pSnapshot->cpuVendor = cpu.cpuVendor;
+    pSnapshot->cpuCoreCount = cpu.coreCount;
+    pSnapshot->cpuUtilizationPercent = cpu.cpuUtilizationPercent;
+    pSnapshot->cpuPackagePowerWatts = cpu.cpuPackagePowerWatts;
+    pSnapshot->cpuPowerLimitWatts = 125.0;
+    pSnapshot->cpuTemperatureC = cpu.cpuTemperatureC;
+    pSnapshot->cpuFrequencyMhz = cpu.cpuFrequencyMhz;
+    pSnapshot->cpuBusyMs = (hasFrame && frame.presentStartTimestampNs >= frame.cpuStartTimestampNs && frame.cpuStartTimestampNs > 0)
+        ? (static_cast<double>(frame.presentStartTimestampNs - frame.cpuStartTimestampNs) / 1'000'000.0) : (curFtMs * 0.7);
+    pSnapshot->cpuWaitMs = std::max(0.0, curFtMs - pSnapshot->cpuBusyMs);
+
+    size_t nCores = std::min(cpu.perCoreUtilization.size(), size_t(128));
+    for (size_t i = 0; i < nCores; ++i) {
+        pSnapshot->perCoreUtilization[i] = cpu.perCoreUtilization[i];
+    }
+    size_t nTemps = std::min(cpu.perCoreTemperature.size(), size_t(128));
+    for (size_t i = 0; i < nTemps; ++i) {
+        pSnapshot->perCoreTemperature[i] = cpu.perCoreTemperature[i];
+    }
+
+    // GPU Telemetry
+    std::strncpy(pSnapshot->gpuName, gpu.deviceName.c_str(), sizeof(pSnapshot->gpuName) - 1);
+    pSnapshot->gpuVendor = gpu.vendor;
+    pSnapshot->gpuUtilizationPercent = gpu.gpuUtilizationPercent;
+    pSnapshot->gpuRenderComputeUtilizationPercent = gpu.gpuUtilizationPercent;
+    pSnapshot->gpuMediaUtilizationPercent = 0.0;
+    pSnapshot->gpuFrequencyMhz = gpu.gpuFrequencyMhz;
+    pSnapshot->gpuEffectiveFrequencyMhz = gpu.gpuFrequencyMhz;
+    pSnapshot->gpuPowerWatts = gpu.powerWatts;
+    pSnapshot->gpuSustainedPowerLimitWatts = 160.0;
+    pSnapshot->gpuCardPowerWatts = gpu.powerWatts;
+    pSnapshot->gpuVoltageMv = gpu.voltageMv;
+    pSnapshot->gpuTemperatureEdgeC = gpu.temperatureEdgeC;
+    pSnapshot->gpuTemperatureHotspotC = gpu.temperatureHotspotC;
+    pSnapshot->gpuTemperatureVramC = gpu.temperatureMemC;
+    pSnapshot->gpuTemperatureVrC = gpu.temperatureEdgeC;
+    pSnapshot->gpuFanSpeedRpm = gpu.fanSpeedRpm;
+    pSnapshot->gpuFanSpeedPercent = (gpu.fanSpeedRpm > 0.0) ? std::min(100.0, (gpu.fanSpeedRpm / 3200.0) * 100.0) : 0.0;
+    pSnapshot->gpuTimeMs = hasFrame ? (static_cast<double>(frame.gpuDurationNs) / 1'000'000.0) : 0.0;
+    pSnapshot->gpuBusyMs = hasFrame ? (static_cast<double>(frame.gpuBusyNs) / 1'000'000.0) : (pSnapshot->gpuTimeMs * 0.95);
+    pSnapshot->gpuWaitMs = hasFrame ? (static_cast<double>(frame.gpuWaitNs) / 1'000'000.0) : 0.0;
+
+    // Limiters
+    pSnapshot->gpuPowerLimited = (gpu.powerWatts >= pSnapshot->gpuSustainedPowerLimitWatts * 0.98) ? 1 : 0;
+    pSnapshot->gpuTemperatureLimited = (gpu.temperatureEdgeC > 90.0 || gpu.temperatureHotspotC > 105.0) ? 1 : 0;
+    pSnapshot->gpuCurrentLimited = 0;
+    pSnapshot->gpuVoltageLimited = (gpu.voltageMv >= 1150.0) ? 1 : 0;
+    pSnapshot->gpuUtilizationLimited = (gpu.gpuUtilizationPercent < 10.0) ? 1 : 0;
+
+    // VRAM
+    pSnapshot->vramTotalBytes = gpu.vramTotalBytes;
+    pSnapshot->vramUsedBytes = gpu.vramUsedBytes;
+    pSnapshot->vramUtilizationPercent = (gpu.vramTotalBytes > 0)
+        ? (static_cast<double>(gpu.vramUsedBytes) / static_cast<double>(gpu.vramTotalBytes) * 100.0)
+        : gpu.memUtilizationPercent;
+    pSnapshot->vramFrequencyMhz = gpu.memFrequencyMhz;
+    pSnapshot->vramEffectiveBandwidthGbs = (gpu.memFrequencyMhz > 0.0) ? (gpu.memFrequencyMhz * 128.0 / 8000.0) : 0.0;
+    pSnapshot->vramMaxBandwidthGbs = 256.0;
+    pSnapshot->vramPowerLimited = 0;
+    pSnapshot->vramTemperatureLimited = (gpu.temperatureMemC > 95.0) ? 1 : 0;
+
+    // PSO
+    pSnapshot->psoCompileCount = 0;
+    pSnapshot->psoCompileTimeMs = 0.0;
+    pSnapshot->psoCompileBusyPercent = 0.0;
+
+    return PM_STATUS_SUCCESS;
 }
 
 } // extern "C"

@@ -14,6 +14,10 @@
 #include <fstream>
 #include <deque>
 #include <algorithm>
+#include <linux/input.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #ifndef VK_LAYER_EXPORT
 #define VK_LAYER_EXPORT extern "C" __attribute__((visibility("default")))
@@ -445,8 +449,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateSwapchainKHR(
     }
 
     VkResult res = VK_ERROR_INITIALIZATION_FAILED;
-    if (nextFunc) {
-        res = nextFunc(device, pCreateInfo, pAllocator, pSwapchain);
+    if (nextFunc && pCreateInfo) {
+        VkSwapchainCreateInfoKHR createInfo = *pCreateInfo;
+        createInfo.imageUsage |= (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+        res = nextFunc(device, &createInfo, pAllocator, pSwapchain);
+        if (res != VK_SUCCESS) {
+            res = nextFunc(device, pCreateInfo, pAllocator, pSwapchain);
+        }
     }
 
     if (res == VK_SUCCESS && pSwapchain && *pSwapchain) {
@@ -623,6 +632,54 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
     }
     lastCheckNs = nowNs;
 
+    // 1. Evdev hardware input polling (works globally: Wayland, Gamescope, Fullscreen)
+    static std::vector<int> evdevFds;
+    static bool evdevScanned = false;
+    if (!evdevScanned) {
+        evdevScanned = true;
+        DIR* dir = opendir("/dev/input");
+        if (dir) {
+            struct dirent* ent;
+            while ((ent = readdir(dir)) != nullptr) {
+                if (strncmp(ent->d_name, "event", 5) == 0) {
+                    std::string path = std::string("/dev/input/") + ent->d_name;
+                    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+                    if (fd >= 0) {
+                        evdevFds.push_back(fd);
+                    }
+                }
+            }
+            closedir(dir);
+        }
+    }
+    for (int efd : evdevFds) {
+        struct input_event iev[8];
+        ssize_t n = read(efd, iev, sizeof(iev));
+        if (n > 0) {
+            size_t count = n / sizeof(struct input_event);
+            for (size_t i = 0; i < count; ++i) {
+                if (iev[i].type == EV_KEY && iev[i].value == 1) {
+                    if (iev[i].code == 67 /* KEY_F9 */) {
+                        g_enableOverlay = !g_enableOverlay;
+                        g_producer.SetOverlayEnabled(g_enableOverlay);
+                        if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
+                            fprintf(stderr, "[gnumon-layer] Evdev hotkey F9 pressed! In-Game HUD: %s\n",
+                                    g_enableOverlay ? "ON" : "OFF");
+                        }
+                    } else if (iev[i].code == 68 /* KEY_F10 */) {
+                        bool newRec = !g_producer.IsRecordingActive();
+                        g_producer.SetRecordingActive(newRec);
+                        if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
+                            fprintf(stderr, "[gnumon-layer] Evdev hotkey F10 pressed! Capture: %s\n",
+                                    newRec ? "STARTING" : "STOPPED");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. X11 / Xwayland fallback
     typedef void* (*XOpenDisplay_fn)(const char*);
     typedef int (*XQueryKeymap_fn)(void*, char[32]);
     typedef unsigned char (*XKeysymToKeycode_fn)(void*, unsigned long);
@@ -634,23 +691,25 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
     static void* dpy = nullptr;
     static uint8_t kcF9 = 0;
     static uint8_t kcF10 = 0;
-    static bool initDone = false;
+    static uint64_t lastDpyTryNs = 0;
 
-    if (!initDone) {
-        initDone = true;
+    if (!dpy && (nowNs - lastDpyTryNs > 1'000'000'000ULL)) {
+        lastDpyTryNs = nowNs;
 #if !defined(_WIN32)
-        x11Lib = dlopen("libX11.so.6", RTLD_LAZY);
-        if (!x11Lib) x11Lib = dlopen("libX11.so", RTLD_LAZY);
-        if (x11Lib) {
-            pXOpenDisplay = (XOpenDisplay_fn)dlsym(x11Lib, "XOpenDisplay");
-            pXQueryKeymap = (XQueryKeymap_fn)dlsym(x11Lib, "XQueryKeymap");
-            pXKeysymToKeycode = (XKeysymToKeycode_fn)dlsym(x11Lib, "XKeysymToKeycode");
-            if (pXOpenDisplay) {
-                dpy = pXOpenDisplay(nullptr);
-                if (dpy && pXKeysymToKeycode) {
-                    kcF9 = pXKeysymToKeycode(dpy, 0xffc6 /* XK_F9 */);
-                    kcF10 = pXKeysymToKeycode(dpy, 0xffc7 /* XK_F10 */);
-                }
+        if (!x11Lib) {
+            x11Lib = dlopen("libX11.so.6", RTLD_LAZY);
+            if (!x11Lib) x11Lib = dlopen("libX11.so", RTLD_LAZY);
+            if (x11Lib) {
+                pXOpenDisplay = (XOpenDisplay_fn)dlsym(x11Lib, "XOpenDisplay");
+                pXQueryKeymap = (XQueryKeymap_fn)dlsym(x11Lib, "XQueryKeymap");
+                pXKeysymToKeycode = (XKeysymToKeycode_fn)dlsym(x11Lib, "XKeysymToKeycode");
+            }
+        }
+        if (pXOpenDisplay) {
+            dpy = pXOpenDisplay(nullptr);
+            if (dpy && pXKeysymToKeycode) {
+                kcF9 = pXKeysymToKeycode(dpy, 0xffc6 /* XK_F9 */);
+                kcF10 = pXKeysymToKeycode(dpy, 0xffc7 /* XK_F10 */);
             }
         }
 #endif
@@ -697,8 +756,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
 {
     uint64_t presentStartNs = gnumon::common::Clock::GetTimestampNs();
     CheckInGameHotkeys(presentStartNs);
-
-    bool overlayActive = g_enableOverlay || g_producer.IsOverlayEnabled();
+    static bool lastProducerOverlay = g_enableOverlay;
+    bool currentProducerOverlay = g_producer.IsOverlayEnabled();
+    if (currentProducerOverlay != lastProducerOverlay) {
+        g_enableOverlay = currentProducerOverlay;
+        lastProducerOverlay = currentProducerOverlay;
+    }
+    bool overlayActive = g_enableOverlay;
     bool isRec = g_producer.IsRecordingActive();
     bool overlayRendered = false;
     VkSemaphore overlaySignalSem = VK_NULL_HANDLE;
@@ -800,6 +864,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                         : ftMs;
                 }
 
+                gnumon::ipc::TelemetrySnapshot telemSnap{};
+                bool hasTelem = g_producer.ReadTelemetry(telemSnap);
+
                 if (g_overlayRenderer.HasSwapchain(sc)) {
                     if (g_overlayRenderer.RenderHud(gfxQueue, queue, gfxQFam, presentQFam,
                                                     sc, imgIdx,
@@ -808,7 +875,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                                                     g_hudCorner,
                                                     pPresentInfo->waitSemaphoreCount,
                                                     pPresentInfo->pWaitSemaphores,
-                                                    &overlaySignalSem)) {
+                                                    &overlaySignalSem,
+                                                    hasTelem ? &telemSnap : nullptr)) {
                         overlayRendered = true;
                     }
                 }
