@@ -131,13 +131,25 @@ void TelemetryCoordinator::RecordFrameLocked(const ipc::FrameEvent& f) {
     }
 }
 
-bool TelemetryCoordinator::GetLatestFrame(ipc::FrameEvent& outEvent) {
-    std::lock_guard<std::mutex> lock(dataMutex_);
+void TelemetryCoordinator::EnsureConsumerConnectedLocked() {
+    if (frameConsumer_.IsConnected()) {
+        uint32_t currentPid = frameConsumer_.GetProcessId();
+        bool isDead = (currentPid > 0 && !std::filesystem::exists("/proc/" + std::to_string(currentPid)));
+        bool targetChanged = (trackedPid_ > 0 && trackedPid_ != currentPid);
+        if (isDead || targetChanged) {
+            frameConsumer_.Close();
+        }
+    }
+
     if (!frameConsumer_.IsConnected()) {
         uint32_t target = trackedPid_;
-        if (target == 0) {
+        // If trackedPid_ is 0 or its ring doesn't exist, search active rings
+        if (target == 0 || !std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(target))) {
             auto active = common::GetActiveRingPids();
-            if (!active.empty()) target = active.front();
+            if (!active.empty()) {
+                target = active.front();
+                trackedPid_ = target;
+            }
         }
         if (target > 0) {
             if (frameConsumer_.Open(target)) {
@@ -150,6 +162,11 @@ bool TelemetryCoordinator::GetLatestFrame(ipc::FrameEvent& outEvent) {
             }
         }
     }
+}
+
+bool TelemetryCoordinator::GetLatestFrame(ipc::FrameEvent& outEvent) {
+    std::lock_guard<std::mutex> lock(dataMutex_);
+    EnsureConsumerConnectedLocked();
 
     ipc::FrameEvent event{};
     bool hasNew = false;
@@ -173,23 +190,7 @@ bool TelemetryCoordinator::GetLatestFrame(ipc::FrameEvent& outEvent) {
 
 bool TelemetryCoordinator::PopFrame(ipc::FrameEvent& outEvent) {
     std::lock_guard<std::mutex> lock(dataMutex_);
-    if (!frameConsumer_.IsConnected()) {
-        uint32_t target = trackedPid_;
-        if (target == 0) {
-            auto active = common::GetActiveRingPids();
-            if (!active.empty()) target = active.front();
-        }
-        if (target > 0) {
-            if (frameConsumer_.Open(target)) {
-                if (recordingActive_) {
-                    frameConsumer_.SetRecordingActive(true);
-                }
-                if (inGameOverlayEnabled_) {
-                    frameConsumer_.SetOverlayEnabled(true);
-                }
-            }
-        }
-    }
+    EnsureConsumerConnectedLocked();
 
     // Drain any remaining frames into the FIFO queue
     ipc::FrameEvent event{};
@@ -212,16 +213,7 @@ bool TelemetryCoordinator::PopFrame(ipc::FrameEvent& outEvent) {
 void TelemetryCoordinator::SetRecordingState(bool active) {
     std::lock_guard<std::mutex> lock(dataMutex_);
     recordingActive_ = active;
-    if (!frameConsumer_.IsConnected()) {
-        uint32_t target = trackedPid_;
-        if (target == 0) {
-            auto active = common::GetActiveRingPids();
-            if (!active.empty()) target = active.front();
-        }
-        if (target > 0) {
-            frameConsumer_.Open(target);
-        }
-    }
+    EnsureConsumerConnectedLocked();
     if (frameConsumer_.IsConnected()) {
         frameConsumer_.SetRecordingActive(active);
     }
@@ -306,6 +298,7 @@ void TelemetryCoordinator::SampleAll() {
         latestGpuMetrics_ = gpu;
         latestCpuMetrics_ = cpu;
 
+        EnsureConsumerConnectedLocked();
         if (frameConsumer_.IsConnected()) {
             ipc::TelemetrySnapshot snap{};
             snap.gpuUtil = static_cast<float>(gpu.gpuUtilizationPercent);
@@ -346,6 +339,7 @@ bool TelemetryCoordinator::ConsumeInGameHudHotkeyToggle() {
     bool triggered = inputTracker_.ConsumeInGameHudHotkeyToggle();
     if (!triggered) {
         std::lock_guard<std::mutex> lock(dataMutex_);
+        EnsureConsumerConnectedLocked();
         if (frameConsumer_.IsConnected()) {
             bool ringHud = frameConsumer_.IsOverlayEnabled();
             if (ringHud != inGameOverlayEnabled_) {
@@ -364,6 +358,7 @@ bool TelemetryCoordinator::ConsumeRecordHotkeyToggle() {
     bool triggered = inputTracker_.ConsumeRecordHotkeyToggle();
     if (!triggered) {
         std::lock_guard<std::mutex> lock(dataMutex_);
+        EnsureConsumerConnectedLocked();
         if (frameConsumer_.IsConnected()) {
             bool ringRec = frameConsumer_.IsRecordingActive();
             if (ringRec != recordingActive_) {
@@ -387,19 +382,7 @@ void TelemetryCoordinator::SetHotkeys(const std::string& inGameHud, const std::s
 void TelemetryCoordinator::SetInGameOverlayEnabled(bool enabled) {
     std::lock_guard<std::mutex> lock(dataMutex_);
     inGameOverlayEnabled_ = enabled;
-    if (!frameConsumer_.IsConnected()) {
-        uint32_t target = trackedPid_;
-        if (target == 0) {
-            auto active = common::GetActiveRingPids();
-            if (!active.empty()) target = active.front();
-        }
-        if (target > 0) {
-            frameConsumer_.Open(target);
-            if (recordingActive_) {
-                frameConsumer_.SetRecordingActive(true);
-            }
-        }
-    }
+    EnsureConsumerConnectedLocked();
     if (frameConsumer_.IsConnected()) {
         frameConsumer_.SetOverlayEnabled(enabled);
     }

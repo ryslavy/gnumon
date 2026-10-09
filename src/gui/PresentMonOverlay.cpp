@@ -162,16 +162,28 @@ void PresentMonOverlay::UpdateDynamicQuery() {
 void PresentMonOverlay::OnPollTimer() {
     if (!query_) return;
 
-    // Autotarget live game if not tracking specific PID
-    if (trackedPid_ == 0) {
+    // Check if current trackedPid_ is still alive and has an active ring
+    bool trackedHasRing = false;
+    if (trackedPid_ > 0) {
+        trackedHasRing = std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(trackedPid_)) &&
+                         std::filesystem::exists("/proc/" + std::to_string(trackedPid_));
+    }
+
+    // Autotarget live game if not tracking specific PID or tracked process ring is gone
+    if (!trackedHasRing || trackedPid_ == 0) {
         auto activePids = common::GetActiveRingPids();
         if (!activePids.empty()) {
             uint32_t activePid = activePids.front();
-            std::string comm = "Game";
-            std::ifstream commFile("/proc/" + std::to_string(activePid) + "/comm");
-            if (commFile.is_open()) std::getline(commFile, comm);
-            SetTargetProcess(activePid, comm);
-            pmStartTrackingProcess(session_, activePid);
+            if (activePid != trackedPid_) {
+                std::string comm = "Game";
+                std::ifstream commFile("/proc/" + std::to_string(activePid) + "/comm");
+                if (commFile.is_open()) std::getline(commFile, comm);
+                SetTargetProcess(activePid, comm);
+                pmStartTrackingProcess(session_, activePid);
+            }
+        } else if (!trackedHasRing && trackedPid_ > 0) {
+            trackedPid_ = 0;
+            processName_ = "Waiting for Game";
         }
     }
 

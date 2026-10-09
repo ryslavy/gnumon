@@ -212,11 +212,17 @@ public:
         return true;
     }
 
+    uint32_t GetProcessId() const {
+        return processId_;
+    }
+
     void Close() {
         if (ring_) {
             munmap(ring_, sizeof(SharedRingHeader));
             ring_ = nullptr;
         }
+        processId_ = 0;
+        shmName_.clear();
     }
 
     bool IsConnected() const {

@@ -155,6 +155,72 @@ void* GetDispatchKey(const void* object) {
 
 } // namespace
 
+static bool IsProcessBlacklisted() {
+    static int cachedResult = -1;
+    if (cachedResult != -1) return (cachedResult == 1);
+
+    if (getenv("DISABLE_GNUMON") != nullptr) {
+        cachedResult = 1;
+        return true;
+    }
+
+    std::string comm;
+    std::ifstream commFile("/proc/self/comm");
+    if (commFile.is_open()) {
+        std::getline(commFile, comm);
+        while (!comm.empty() && (comm.back() == '\r' || comm.back() == '\n' || comm.back() == ' ')) {
+            comm.pop_back();
+        }
+    }
+
+    static const char* blacklistedNames[] = {
+        "gnome-shell",
+        "kwin_wayland",
+        "kwin_x11",
+        "kwin",
+        "hyprland",
+        "Hyprland",
+        "sway",
+        "wayfire",
+        "weston",
+        "Xwayland",
+        "plasmashell",
+        "plasma-workspac",
+        "gnumon-gui",
+        "gnumond",
+        "gnumon-cli",
+        "steam",
+        "steamwebhelper",
+        "discord",
+        "slack",
+        "obs",
+        "gamescope"
+    };
+
+    for (const char* name : blacklistedNames) {
+        if (comm == name) {
+            cachedResult = 1;
+            return true;
+        }
+    }
+
+    std::ifstream cmdFile("/proc/self/cmdline");
+    if (cmdFile.is_open()) {
+        std::string cmd;
+        if (std::getline(cmdFile, cmd, '\0')) {
+            for (const char* name : blacklistedNames) {
+                if (cmd.find(name) != std::string::npos) {
+                    cachedResult = 1;
+                    return true;
+                }
+            }
+        }
+    }
+
+    cachedResult = 0;
+    return false;
+}
+
 // --- Intercepted Functions ---
 
 static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateInstance(
@@ -191,6 +257,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateInstance(
         disp.getProcAddr = nextGIPA;
         disp.destroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(nextGIPA(*pInstance, "vkDestroyInstance"));
         g_instanceDispatch[GetDispatchKey(*pInstance)] = disp;
+
+        if (IsProcessBlacklisted()) {
+            return result;
+        }
 
         if (!g_getPhysicalDeviceMemoryProperties) {
             g_getPhysicalDeviceMemoryProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
@@ -270,6 +340,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateDevice(
         DeviceDispatch disp{};
         disp.getProcAddr = nextGDPA;
         disp.destroyDevice = reinterpret_cast<PFN_vkDestroyDevice>(nextGDPA(*pDevice, "vkDestroyDevice"));
+
+        if (IsProcessBlacklisted()) {
+            g_deviceDispatch[GetDispatchKey(*pDevice)] = disp;
+            return result;
+        }
         disp.queuePresentKHR = reinterpret_cast<PFN_vkQueuePresentKHR>(nextGDPA(*pDevice, "vkQueuePresentKHR"));
         disp.acquireNextImageKHR = reinterpret_cast<PFN_vkAcquireNextImageKHR>(nextGDPA(*pDevice, "vkAcquireNextImageKHR"));
         disp.acquireNextImage2KHR = reinterpret_cast<PFN_vkAcquireNextImage2KHR>(nextGDPA(*pDevice, "vkAcquireNextImage2KHR"));
@@ -1065,6 +1140,21 @@ VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL gnumon_vkGetDeviceProcA
     VkDevice device,
     const char* pName)
 {
+    if (IsProcessBlacklisted()) {
+        PFN_vkGetDeviceProcAddr nextGDPA = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_dispatchMutex);
+            auto it = g_deviceDispatch.find(GetDispatchKey(device));
+            if (it != g_deviceDispatch.end()) {
+                nextGDPA = it->second.getProcAddr;
+            }
+        }
+        if (nextGDPA) {
+            return nextGDPA(device, pName);
+        }
+        return nullptr;
+    }
+
     if (std::strcmp(pName, "vkGetDeviceProcAddr") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkGetDeviceProcAddr);
     if (std::strcmp(pName, "vkDestroyDevice") == 0)
@@ -1115,6 +1205,32 @@ VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL gnumon_vkGetInstancePro
     VkInstance instance,
     const char* pName)
 {
+    if (IsProcessBlacklisted()) {
+        if (std::strcmp(pName, "vkGetInstanceProcAddr") == 0)
+            return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkGetInstanceProcAddr);
+        if (std::strcmp(pName, "vkCreateInstance") == 0)
+            return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkCreateInstance);
+        if (std::strcmp(pName, "vkDestroyInstance") == 0)
+            return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkDestroyInstance);
+        if (std::strcmp(pName, "vkCreateDevice") == 0)
+            return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkCreateDevice);
+        if (std::strcmp(pName, "vkGetDeviceProcAddr") == 0)
+            return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkGetDeviceProcAddr);
+
+        PFN_vkGetInstanceProcAddr nextGIPA = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_dispatchMutex);
+            auto it = g_instanceDispatch.find(GetDispatchKey(instance));
+            if (it != g_instanceDispatch.end()) {
+                nextGIPA = it->second.getProcAddr;
+            }
+        }
+        if (nextGIPA) {
+            return nextGIPA(instance, pName);
+        }
+        return nullptr;
+    }
+
     if (std::strcmp(pName, "vkGetInstanceProcAddr") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkGetInstanceProcAddr);
     if (std::strcmp(pName, "vkCreateInstance") == 0)

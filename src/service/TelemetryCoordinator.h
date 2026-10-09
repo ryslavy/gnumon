@@ -47,6 +47,7 @@ public:
 
 private:
     void RecordFrameLocked(const ipc::FrameEvent& f);
+    void EnsureConsumerConnectedLocked();
 
     std::unique_ptr<control::IGpuTelemetryProvider> gpuProvider_;
     control::CpuTelemetry cpuTelemetry_;

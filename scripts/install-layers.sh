@@ -92,9 +92,6 @@ cat <<EOF > "$DEST_IMPLICIT/VkLayer_gnumon.json"
                 ]
             }
         ],
-        "enable_environment": {
-            "ENABLE_GNUMON": "1"
-        },
         "disable_environment": {
             "DISABLE_GNUMON": "1"
         }
@@ -186,7 +183,8 @@ if [ -d "$FLATPAK_DIR" ]; then
 fi
 
 echo "==> Successfully installed gnumon layer & tools!"
-echo "You can now run games with:"
+echo "Vulkan games on Steam will now be tracked automatically!"
+echo "Or run games manually with:"
 echo "   gnumon-run %command%"
-echo "or:"
-echo "   ENABLE_GNUMON=1 %command%"
+echo "To disable for a specific game:"
+echo "   DISABLE_GNUMON=1 %command%"

@@ -72,6 +72,40 @@ bool FilesDiffer(const std::filesystem::path& a, const std::filesystem::path& b)
     return false;
 }
 
+inline std::string GenerateImplicitLayerManifestJson(const std::string& libPath, const std::string& desc = "gnumon Linux PresentMon frame capture layer") {
+    return std::string("{\n") +
+        "    \"file_format_version\" : \"1.0.0\",\n" +
+        "    \"layer\" : {\n" +
+        "        \"name\": \"VK_LAYER_GNUMON_capture\",\n" +
+        "        \"type\": \"GLOBAL\",\n" +
+        "        \"library_path\": \"" + libPath + "\",\n" +
+        "        \"api_version\": \"1.3.0\",\n" +
+        "        \"implementation_version\": \"1\",\n" +
+        "        \"description\": \"" + desc + "\",\n" +
+        "        \"functions\": {\n" +
+        "            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n" +
+        "        },\n" +
+        "        \"device_extensions\": [\n" +
+        "            {\n" +
+        "                \"name\": \"VK_KHR_swapchain\",\n" +
+        "                \"spec_version\": \"70\",\n" +
+        "                \"entrypoints\": [\n" +
+        "                    \"vkCreateSwapchainKHR\",\n" +
+        "                    \"vkDestroySwapchainKHR\",\n" +
+        "                    \"vkGetSwapchainImagesKHR\",\n" +
+        "                    \"vkAcquireNextImageKHR\",\n" +
+        "                    \"vkQueuePresentKHR\",\n" +
+        "                    \"vkAcquireNextImage2KHR\"\n" +
+        "                ]\n" +
+        "            }\n" +
+        "        ],\n" +
+        "        \"disable_environment\": {\n" +
+        "            \"DISABLE_GNUMON\": \"1\"\n" +
+        "        }\n" +
+        "    }\n" +
+        "}\n";
+}
+
 // If the Vulkan layer is installed but differs from the one shipped with this build/AppImage,
 // overwrite every installed copy so games load the current layer. Returns true if updated.
 bool RefreshInstalledLayerIfOutdated(const std::filesystem::path& home) {
@@ -95,21 +129,71 @@ bool RefreshInstalledLayerIfOutdated(const std::filesystem::path& home) {
         auto t = std::filesystem::last_write_time(c, ec);
         if (src.empty() || t > srcTime) { src = c; srcTime = t; }
     }
-    if (src.empty() || !FilesDiffer(src, installed)) return false;
 
-    const std::filesystem::path targets[] = {
-        installed,
-        home / ".local/share/vulkan/implicit_layer.d/libVkLayer_gnumon.so",
-        home / ".local/share/vulkan/explicit_layer.d/libVkLayer_gnumon.so",
-        home / ".var/app/com.valvesoftware.Steam/.local/share/vulkan/implicit_layer.d/libVkLayer_gnumon.so",
-    };
     bool updated = false;
-    for (const auto& t : targets) {
-        if (t != installed && !std::filesystem::exists(t, ec)) continue;
-        // Remove first so running games keep their mapped (old) inode instead of crashing
-        std::filesystem::remove(t, ec);
-        if (std::filesystem::copy_file(src, t, std::filesystem::copy_options::overwrite_existing, ec)) updated = true;
+    if (!src.empty() && FilesDiffer(src, installed)) {
+        const std::filesystem::path targets[] = {
+            installed,
+            home / ".local/share/vulkan/implicit_layer.d/libVkLayer_gnumon.so",
+            home / ".local/share/vulkan/explicit_layer.d/libVkLayer_gnumon.so",
+            home / ".var/app/com.valvesoftware.Steam/.local/share/vulkan/implicit_layer.d/libVkLayer_gnumon.so",
+        };
+        for (const auto& t : targets) {
+            if (t != installed && !std::filesystem::exists(t, ec)) continue;
+            // Remove first so running games keep their mapped (old) inode instead of crashing
+            std::filesystem::remove(t, ec);
+            if (std::filesystem::copy_file(src, t, std::filesystem::copy_options::overwrite_existing, ec)) updated = true;
+        }
     }
+
+    // Check and update implicit layer manifests to remove obsolete ENABLE_GNUMON filter
+    std::filesystem::path impJson = home / ".local/share/vulkan/implicit_layer.d/VkLayer_gnumon.json";
+    if (std::filesystem::exists(impJson, ec)) {
+        std::ifstream jf(impJson);
+        std::string content((std::istreambuf_iterator<char>(jf)), std::istreambuf_iterator<char>());
+        if (content.find("ENABLE_GNUMON") != std::string::npos) {
+            std::string updatedJson = GenerateImplicitLayerManifestJson(installed.string());
+            std::ofstream out(impJson);
+            out << updatedJson;
+            std::ofstream out64(home / ".local/share/vulkan/implicit_layer.d/VkLayer_gnumon.x86_64.json");
+            out64 << updatedJson;
+            updated = true;
+        }
+    }
+
+    // Also update 32-bit implicit manifest if present
+    std::filesystem::path impJson32 = home / ".local/share/vulkan/implicit_layer.d/VkLayer_gnumon.i686.json";
+    if (std::filesystem::exists(impJson32, ec)) {
+        std::ifstream jf(impJson32);
+        std::string content((std::istreambuf_iterator<char>(jf)), std::istreambuf_iterator<char>());
+        if (content.find("ENABLE_GNUMON") != std::string::npos) {
+            std::string lib32 = (home / ".local/lib/gnumon/lib32/libVkLayer_gnumon.so").string();
+            std::string updatedJson = GenerateImplicitLayerManifestJson(lib32, "gnumon Linux PresentMon 32-bit frame capture layer");
+            std::ofstream out(impJson32);
+            out << updatedJson;
+            std::ofstream outX86(home / ".local/share/vulkan/implicit_layer.d/VkLayer_gnumon.x86.json");
+            outX86 << updatedJson;
+            updated = true;
+        }
+    }
+
+    // Also update Flatpak Steam manifest if present
+    std::filesystem::path flatpakDir = home / ".var/app/com.valvesoftware.Steam";
+    if (std::filesystem::exists(flatpakDir, ec)) {
+        std::filesystem::path fImpJson = flatpakDir / ".local/share/vulkan/implicit_layer.d/VkLayer_gnumon.json";
+        if (std::filesystem::exists(fImpJson, ec)) {
+            std::ifstream jf(fImpJson);
+            std::string content((std::istreambuf_iterator<char>(jf)), std::istreambuf_iterator<char>());
+            if (content.find("ENABLE_GNUMON") != std::string::npos) {
+                std::string fLib = (flatpakDir / ".local/share/vulkan/implicit_layer.d/libVkLayer_gnumon.so").string();
+                std::string updatedJson = GenerateImplicitLayerManifestJson(fLib);
+                std::ofstream out(fImpJson);
+                out << updatedJson;
+                updated = true;
+            }
+        }
+    }
+
     return updated;
 }
 } // namespace
@@ -598,40 +682,9 @@ void MainWindow::OnToggleLayerInstall() {
     // 4. Generate JSON manifests
     {
         std::ofstream imp(impFile);
-        imp << "{\n"
-            << "    \"file_format_version\" : \"1.0.0\",\n"
-            << "    \"layer\" : {\n"
-            << "        \"name\": \"VK_LAYER_GNUMON_capture\",\n"
-            << "        \"type\": \"GLOBAL\",\n"
-            << "        \"library_path\": \"" << installedVkLib.string() << "\",\n"
-            << "        \"api_version\": \"1.3.0\",\n"
-            << "        \"implementation_version\": \"1\",\n"
-            << "        \"description\": \"gnumon Linux PresentMon frame capture layer\",\n"
-            << "        \"functions\": {\n"
-            << "            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n"
-            << "        },\n"
-            << "        \"device_extensions\": [\n"
-            << "            {\n"
-            << "                \"name\": \"VK_KHR_swapchain\",\n"
-            << "                \"spec_version\": \"70\",\n"
-            << "                \"entrypoints\": [\n"
-            << "                    \"vkCreateSwapchainKHR\",\n"
-            << "                    \"vkDestroySwapchainKHR\",\n"
-            << "                    \"vkGetSwapchainImagesKHR\",\n"
-            << "                    \"vkAcquireNextImageKHR\",\n"
-            << "                    \"vkQueuePresentKHR\",\n"
-            << "                    \"vkAcquireNextImage2KHR\"\n"
-            << "                ]\n"
-            << "            }\n"
-            << "        ],\n"
-            << "        \"enable_environment\": {\n"
-            << "            \"ENABLE_GNUMON\": \"1\"\n"
-            << "        },\n"
-            << "        \"disable_environment\": {\n"
-            << "            \"DISABLE_GNUMON\": \"1\"\n"
-            << "        }\n"
-            << "    }\n"
-            << "}\n";
+        imp << GenerateImplicitLayerManifestJson(installedVkLib.string());
+        std::ofstream imp64(destImpDir / "VkLayer_gnumon.x86_64.json");
+        imp64 << GenerateImplicitLayerManifestJson(installedVkLib.string());
     }
 
     {
@@ -664,6 +717,35 @@ void MainWindow::OnToggleLayerInstall() {
             << "        ]\n"
             << "    }\n"
             << "}\n";
+        std::ofstream exp64(destExpDir / "VkLayer_gnumon.x86_64.json");
+        exp64 << "{\n"
+              << "    \"file_format_version\" : \"1.0.0\",\n"
+              << "    \"layer\" : {\n"
+              << "        \"name\": \"VK_LAYER_GNUMON_capture\",\n"
+              << "        \"type\": \"GLOBAL\",\n"
+              << "        \"library_path\": \"" << installedVkLib.string() << "\",\n"
+              << "        \"api_version\": \"1.3.0\",\n"
+              << "        \"implementation_version\": \"1\",\n"
+              << "        \"description\": \"gnumon Linux PresentMon frame capture layer\",\n"
+              << "        \"functions\": {\n"
+              << "            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n"
+              << "        },\n"
+              << "        \"device_extensions\": [\n"
+              << "            {\n"
+              << "                \"name\": \"VK_KHR_swapchain\",\n"
+              << "                \"spec_version\": \"70\",\n"
+              << "                \"entrypoints\": [\n"
+              << "                    \"vkCreateSwapchainKHR\",\n"
+              << "                    \"vkDestroySwapchainKHR\",\n"
+              << "                    \"vkGetSwapchainImagesKHR\",\n"
+              << "                    \"vkAcquireNextImageKHR\",\n"
+              << "                    \"vkQueuePresentKHR\",\n"
+              << "                    \"vkAcquireNextImage2KHR\"\n"
+              << "                ]\n"
+              << "            }\n"
+              << "        ]\n"
+              << "    }\n"
+              << "}\n";
     }
 
     // 5. Copy library directly to implicit and explicit directories for fallback loader discovery
@@ -671,6 +753,29 @@ void MainWindow::OnToggleLayerInstall() {
                                std::filesystem::copy_options::overwrite_existing, ec);
     std::filesystem::copy_file(installedVkLib, destExpDir / "libVkLayer_gnumon.so",
                                std::filesystem::copy_options::overwrite_existing, ec);
+
+    // Check and install 32-bit multilib layers if available
+    std::vector<std::filesystem::path> vk32Candidates = {
+        exeDir / "lib32/libVkLayer_gnumon.so",
+        exeDir / "../lib32/libVkLayer_gnumon.so",
+        exeDir / "../build-container/lib32/libVkLayer_gnumon.so",
+        exeDir / "../build-host/lib32/libVkLayer_gnumon.so",
+    };
+    for (const auto& cand : vk32Candidates) {
+        if (std::filesystem::exists(cand, ec)) {
+            std::filesystem::path destLib32Dir = destLibDir / "lib32";
+            std::filesystem::create_directories(destLib32Dir, ec);
+            std::filesystem::path installedVkLib32 = destLib32Dir / "libVkLayer_gnumon.so";
+            std::filesystem::copy_file(cand, installedVkLib32, std::filesystem::copy_options::overwrite_existing, ec);
+
+            std::string json32 = GenerateImplicitLayerManifestJson(installedVkLib32.string(), "gnumon Linux PresentMon 32-bit frame capture layer");
+            std::ofstream f32(destImpDir / "VkLayer_gnumon.i686.json");
+            f32 << json32;
+            std::ofstream f32x86(destImpDir / "VkLayer_gnumon.x86.json");
+            f32x86 << json32;
+            break;
+        }
+    }
 
     // 6. Register layer into Flatpak Steam if installed
     std::filesystem::path flatpakSteam = homePath / ".var/app/com.valvesoftware.Steam";
@@ -680,40 +785,7 @@ void MainWindow::OnToggleLayerInstall() {
         std::filesystem::path flatpakLib = flatpakImplicit / "libVkLayer_gnumon.so";
         std::filesystem::copy_file(installedVkLib, flatpakLib, std::filesystem::copy_options::overwrite_existing, ec);
         std::ofstream fimp(flatpakImplicit / "VkLayer_gnumon.json");
-        fimp << "{\n"
-             << "    \"file_format_version\" : \"1.0.0\",\n"
-             << "    \"layer\" : {\n"
-             << "        \"name\": \"VK_LAYER_GNUMON_capture\",\n"
-             << "        \"type\": \"GLOBAL\",\n"
-             << "        \"library_path\": \"" << flatpakLib.string() << "\",\n"
-             << "        \"api_version\": \"1.3.0\",\n"
-             << "        \"implementation_version\": \"1\",\n"
-             << "        \"description\": \"gnumon Linux PresentMon frame capture layer\",\n"
-             << "        \"functions\": {\n"
-             << "            \"vkNegotiateLoaderLayerInterfaceVersion\": \"vkNegotiateLoaderLayerInterfaceVersion\"\n"
-             << "        },\n"
-             << "        \"device_extensions\": [\n"
-             << "            {\n"
-             << "                \"name\": \"VK_KHR_swapchain\",\n"
-             << "                \"spec_version\": \"70\",\n"
-             << "                \"entrypoints\": [\n"
-             << "                    \"vkCreateSwapchainKHR\",\n"
-             << "                    \"vkDestroySwapchainKHR\",\n"
-             << "                    \"vkGetSwapchainImagesKHR\",\n"
-             << "                    \"vkAcquireNextImageKHR\",\n"
-             << "                    \"vkQueuePresentKHR\",\n"
-             << "                    \"vkAcquireNextImage2KHR\"\n"
-             << "                ]\n"
-             << "            }\n"
-             << "        ],\n"
-             << "        \"enable_environment\": {\n"
-             << "            \"ENABLE_GNUMON\": \"1\"\n"
-             << "        },\n"
-             << "        \"disable_environment\": {\n"
-             << "            \"DISABLE_GNUMON\": \"1\"\n"
-             << "        }\n"
-             << "    }\n"
-             << "}\n";
+        fimp << GenerateImplicitLayerManifestJson(flatpakLib.string());
     }
 
     btnInstallLayer_->setText("Uninstall Layer");
@@ -724,10 +796,11 @@ void MainWindow::OnToggleLayerInstall() {
         "• Manifest: ~/.local/share/vulkan/implicit_layer.d/VkLayer_gnumon.json\n"
         "• Library:  ~/.local/lib/gnumon/libVkLayer_gnumon.so\n"
         "• Wrapper:  ~/.local/bin/gnumon-run\n\n"
-        "Launch games on Steam using:\n"
+        "Vulkan games on Steam will now be tracked automatically!\n"
+        "Or launch games manually with:\n"
         "   gnumon-run %command%\n"
-        "Or with In-Game HUD enabled:\n"
-        "   gnumon-run --overlay %command%");
+        "To disable for a specific game:\n"
+        "   DISABLE_GNUMON=1 %command%");
 }
 
 void MainWindow::PopulateProcessList() {
@@ -782,14 +855,16 @@ void MainWindow::PopulateProcessList() {
         }
     }
 
-    if (activeIndex >= 1 && trackedPid_ == 0) {
-        comboProcess_->setCurrentIndex(activeIndex);
-        trackedPid_ = comboProcess_->itemData(activeIndex).toUInt();
+    if (!activePids.empty() && trackedPid_ == 0) {
+        trackedPid_ = activePids.front();
         if (session_) {
             pmStartTrackingProcess(session_, trackedPid_);
         }
         if (overlay_) {
-            overlay_->SetTargetProcess(trackedPid_, comboProcess_->itemText(activeIndex).toStdString());
+            std::string comm = "Game";
+            std::ifstream commFile("/proc/" + std::to_string(trackedPid_) + "/comm");
+            if (commFile.is_open()) std::getline(commFile, comm);
+            overlay_->SetTargetProcess(trackedPid_, comm);
         }
     }
 
@@ -839,7 +914,15 @@ void MainWindow::OnPollTimer() {
 
     if (!query_) return;
 
-    if (trackedPid_ == 0 || (comboProcess_->currentIndex() == 0)) {
+    // Check if current trackedPid_ is still alive and has an active ring
+    bool trackedHasRing = false;
+    if (trackedPid_ > 0) {
+        trackedHasRing = std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(trackedPid_)) &&
+                         std::filesystem::exists("/proc/" + std::to_string(trackedPid_));
+    }
+
+    // Auto-detect live game if in Auto-detect mode (index 0) or tracked process has no ring
+    if (!trackedHasRing || comboProcess_->currentIndex() == 0) {
         auto activePids = common::GetActiveRingPids();
         if (!activePids.empty()) {
             uint32_t activePid = activePids.front();
@@ -851,9 +934,20 @@ void MainWindow::OnPollTimer() {
                         pmSetRecordingState(session_, true);
                     }
                 }
+                if (overlay_) {
+                    std::string comm = "Game";
+                    std::ifstream commFile("/proc/" + std::to_string(activePid) + "/comm");
+                    if (commFile.is_open()) std::getline(commFile, comm);
+                    overlay_->SetTargetProcess(trackedPid_, comm);
+                }
                 if (allMetricsDialog_) {
                     allMetricsDialog_->SetTargetProcess(trackedPid_);
                 }
+            }
+        } else if (!trackedHasRing && trackedPid_ > 0) {
+            trackedPid_ = 0;
+            if (session_) {
+                pmStartTrackingProcess(session_, 0);
             }
         }
     }
@@ -933,7 +1027,16 @@ void MainWindow::OnPollTimer() {
         }
         csvFile_.flush();
 
-        lblStatus_->setText(QString("Status: Recording... %1 frames captured").arg(recordedFramesCount_));
+        btnRecord_->setText(QString("Stop Capture (%1 frames)").arg(recordedFramesCount_));
+        if (recordedFramesCount_ == 0) {
+            if (trackedPid_ > 0) {
+                lblStatus_->setText(QString("Status: Recording... Waiting for game frames (PID: %1)").arg(trackedPid_));
+            } else {
+                lblStatus_->setText("Status: Recording... Waiting for Vulkan/OpenGL game to start...");
+            }
+        } else {
+            lblStatus_->setText(QString("Status: Recording (PID %1)... %2 frames captured").arg(trackedPid_).arg(recordedFramesCount_));
+        }
     }
 }
 
@@ -989,7 +1092,9 @@ void MainWindow::OnOpenCapturesFolder() {
 void MainWindow::OnToggleRecording() {
     isRecording_ = !isRecording_;
     if (isRecording_) {
-        if (trackedPid_ == 0) {
+        // Auto-acquire active game PID if trackedPid_ is 0 or has no ring
+        bool trackedHasRing = (trackedPid_ > 0 && std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(trackedPid_)));
+        if (!trackedHasRing) {
             auto activePids = common::GetActiveRingPids();
             if (!activePids.empty()) {
                 trackedPid_ = activePids.front();
@@ -1041,9 +1146,13 @@ void MainWindow::OnToggleRecording() {
         pmRegisterFrameQuery(session_, &frameQuery_, frameElements.data(), frameElements.size(), &frameBlobSize_);
 
         recordedFramesCount_ = 0;
-        btnRecord_->setText("Stop Capture");
+        btnRecord_->setText("Stop Capture (0 frames)");
         btnRecord_->setStyleSheet("padding: 6px 16px; font-weight: bold; background-color: #c62828; color: white; border-radius: 4px;");
-        lblStatus_->setText(QString("Status: Recording to %1...").arg(currentCapturePath_));
+        if (trackedPid_ > 0 && std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(trackedPid_))) {
+            lblStatus_->setText(QString("Status: Recording game (PID %1) to %2...").arg(trackedPid_).arg(filename));
+        } else {
+            lblStatus_->setText("Status: Recording started — waiting for Vulkan/OpenGL game to start...");
+        }
     } else {
         if (session_) {
             pmSetRecordingState(session_, false);
@@ -1059,8 +1168,12 @@ void MainWindow::OnToggleRecording() {
 
         btnRecord_->setText("Start Capture (CSV)");
         btnRecord_->setStyleSheet("padding: 6px 16px; font-weight: bold; background-color: #2e7d32; color: white; border-radius: 4px;");
-        lblStatus_->setText(QString("Status: Capture finished (%1 frames saved to %2)").arg(recordedFramesCount_).arg(currentCapturePath_));
-        if (config_.autoOpenCaptures) {
+        if (recordedFramesCount_ > 0) {
+            lblStatus_->setText(QString("Status: Capture finished (%1 frames saved to %2)").arg(recordedFramesCount_).arg(currentCapturePath_));
+        } else {
+            lblStatus_->setText("Status: Capture finished (0 frames — ensure game is running with Vulkan/OpenGL layer)");
+        }
+        if (config_.autoOpenCaptures && recordedFramesCount_ > 0) {
             OnOpenCapturesFolder();
         }
     }
