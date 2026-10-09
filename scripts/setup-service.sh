@@ -9,6 +9,20 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 ACTION="${1:-status}"
 
+ensure_binaries() {
+    mkdir -p "$HOME/.local/bin" "$HOME/.local/lib/gnumon"
+    for dir in "$SCRIPT_DIR" "$ROOT_DIR/build-host" "$ROOT_DIR/build-container" "$ROOT_DIR/bin"; do
+        if [ -f "$dir/gnumond" ]; then
+            cp -f "$dir/gnumond" "$HOME/.local/bin/"
+            chmod +x "$HOME/.local/bin/gnumond"
+        fi
+        if [ -f "$dir/gnumon-cli" ]; then
+            cp -f "$dir/gnumon-cli" "$HOME/.local/bin/"
+            chmod +x "$HOME/.local/bin/gnumon-cli"
+        fi
+    done
+}
+
 case "$ACTION" in
     status)
         # 1. User daemon status
@@ -39,9 +53,12 @@ case "$ACTION" in
 
         # 4. Input device accessibility for current user
         INPUT_ACCESS="no"
-        if [ -r "/dev/input/event0" ] || [ -r "/dev/input/event1" ] || [ -r "/dev/input/event2" ]; then
-            INPUT_ACCESS="yes"
-        fi
+        for ev in /dev/input/event*; do
+            if [ -r "$ev" ]; then
+                INPUT_ACCESS="yes"
+                break
+            fi
+        done
 
         # 5. Vulkan layers status (64-bit and 32-bit)
         VK64_INSTALLED="no"
@@ -67,6 +84,7 @@ case "$ACTION" in
 
     enable-user)
         echo "==> Setting up systemd user service for gnumond..."
+        ensure_binaries
         USER_SERVICE_DIR="$HOME/.config/systemd/user"
         mkdir -p "$USER_SERVICE_DIR"
         cat <<EOF > "$USER_SERVICE_DIR/gnumond.service"
@@ -92,83 +110,85 @@ EOF
     disable-user)
         echo "==> Disabling and stopping systemd user service..."
         systemctl --user disable --now gnumond.service 2>/dev/null || true
+        killall -u "$USER" gnumond 2>/dev/null || true
         echo "==> User service stopped."
         ;;
 
     start-user)
+        USER_SERVICE_DIR="$HOME/.config/systemd/user"
+        if [ ! -f "$USER_SERVICE_DIR/gnumond.service" ]; then
+            echo "==> Service unit not found, creating..."
+            ensure_binaries
+            mkdir -p "$USER_SERVICE_DIR"
+            cat <<EOF > "$USER_SERVICE_DIR/gnumond.service"
+[Unit]
+Description=gnumon Performance Monitoring Daemon
+Documentation=https://github.com/ryslavy/gnumon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gnumond -f
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+EOF
+            systemctl --user daemon-reload
+        fi
+        ensure_binaries
         systemctl --user start gnumond.service
         echo "==> User service started."
         ;;
 
     stop-user)
+        echo "==> Stopping user service..."
         systemctl --user stop gnumond.service 2>/dev/null || true
+        killall -u "$USER" gnumond 2>/dev/null || true
         echo "==> User service stopped."
         ;;
 
     install-udev)
         echo "==> Installing udev rules using pkexec..."
-        RULES_SRC=""
-        for r in "$SCRIPT_DIR/99-gnumon-input.rules" \
-                 "$SCRIPT_DIR/../lib/udev/rules.d/99-gnumon-input.rules" \
-                 "$SCRIPT_DIR/../lib/udev/99-gnumon-input.rules" \
-                 "$ROOT_DIR/scripts/99-gnumon-input.rules" \
-                 "/usr/lib/udev/rules.d/99-gnumon-input.rules"; do
-            if [ -f "$r" ]; then
-                RULES_SRC="$r"
-                break
-            fi
-        done
-
-        if [ -z "$RULES_SRC" ]; then
-            echo "Error: 99-gnumon-input.rules not found" >&2
-            exit 1
-        fi
-        pkexec bash -c "cp -f '$RULES_SRC' /etc/udev/rules.d/99-gnumon-input.rules && udevadm control --reload-rules && udevadm trigger"
+        pkexec bash -c '
+            mkdir -p /etc/udev/rules.d &&
+            cat <<EOF > /etc/udev/rules.d/99-gnumon-input.rules
+# gnumon - Global evdev input hotkey and mouse click-to-photon latency access for current active desktop user
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="seat", TAG+="uaccess"
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", TAG+="seat", TAG+="uaccess"
+EOF
+            udevadm control --reload-rules &&
+            udevadm trigger -s input -c change
+        '
         echo "==> Udev rules installed and reloaded successfully!"
         ;;
 
     install-system)
         echo "==> Installing system-wide daemon and udev rules using pkexec..."
-        RULES_SRC=""
-        for r in "$SCRIPT_DIR/99-gnumon-input.rules" \
-                 "$SCRIPT_DIR/../lib/udev/rules.d/99-gnumon-input.rules" \
-                 "$SCRIPT_DIR/../lib/udev/99-gnumon-input.rules" \
-                 "$ROOT_DIR/scripts/99-gnumon-input.rules" \
-                 "/usr/lib/udev/rules.d/99-gnumon-input.rules"; do
-            if [ -f "$r" ]; then
-                RULES_SRC="$r"
-                break
-            fi
-        done
-
-        SERVICE_SRC=""
-        for s in "$ROOT_DIR/systemd/gnumond.service" \
-                 "$SCRIPT_DIR/../share/systemd/user/gnumond.service" \
-                 "$SCRIPT_DIR/../systemd/gnumond.service" \
-                 "/usr/share/systemd/user/gnumond.service"; do
-            if [ -f "$s" ]; then
-                SERVICE_SRC="$s"
-                break
-            fi
-        done
-
-        pkexec bash -c "
-            if [ -n '$RULES_SRC' ]; then
-                cp -f '$RULES_SRC' /etc/udev/rules.d/99-gnumon-input.rules
-                udevadm control --reload-rules && udevadm trigger
-            fi &&
-            if [ -n '$SERVICE_SRC' ]; then
-                cp -f '$SERVICE_SRC' /etc/systemd/system/gnumond.service &&
-                systemctl daemon-reload &&
-                systemctl enable --now gnumond.service
-            fi
-        "
+        pkexec bash -c '
+            mkdir -p /etc/udev/rules.d &&
+            cat <<EOF > /etc/udev/rules.d/99-gnumon-input.rules
+# gnumon - Global evdev input hotkey and mouse click-to-photon latency access for current active desktop user
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="seat", TAG+="uaccess"
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", TAG+="seat", TAG+="uaccess"
+EOF
+            udevadm control --reload-rules &&
+            udevadm trigger -s input -c change
+        '
         echo "==> System service and udev rules installed and activated!"
         ;;
 
     install-layers)
         echo "==> Running Vulkan layers installer..."
-        "$SCRIPT_DIR/install-layers.sh"
+        for s in "$SCRIPT_DIR/install-layers.sh" "$ROOT_DIR/scripts/install-layers.sh"; do
+            if [ -f "$s" ]; then
+                bash "$s"
+                exit 0
+            fi
+        done
+        echo "Error: install-layers.sh not found" >&2
+        exit 1
         ;;
 
     *)

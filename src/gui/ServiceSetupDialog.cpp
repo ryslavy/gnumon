@@ -9,8 +9,10 @@ namespace gnumon::gui {
 
 static QString FindSetupScript() {
     QString appDir = QCoreApplication::applicationDirPath();
+    QString envAppDir = qgetenv("APPDIR");
     QStringList candidates = {
         appDir + "/setup-service.sh",
+        envAppDir + "/usr/bin/setup-service.sh",
         appDir + "/../scripts/setup-service.sh",
         appDir + "/../../scripts/setup-service.sh",
         QDir::homePath() + "/.local/bin/setup-service.sh",
@@ -18,7 +20,7 @@ static QString FindSetupScript() {
         "/usr/bin/setup-service.sh"
     };
     for (const auto& path : candidates) {
-        if (QFileInfo::exists(path)) {
+        if (!path.isEmpty() && QFileInfo::exists(path)) {
             return QFileInfo(path).canonicalFilePath();
         }
     }
@@ -161,11 +163,20 @@ void ServiceSetupDialog::SetupUi() {
 QString ServiceSetupDialog::RunSetupCommand(const QString& action) {
     QString scriptPath = FindSetupScript();
     QProcess process;
-    process.start(scriptPath, {action});
-    if (!process.waitForFinished(10000)) {
-        return "";
+    process.setProcessChannelMode(QProcess::MergedChannels);
+
+    if (QFileInfo::exists(scriptPath)) {
+        process.start("/bin/bash", {scriptPath, action});
+    } else {
+        process.start(scriptPath, {action});
     }
-    return QString::fromUtf8(process.readAllStandardOutput());
+
+    int timeoutMs = (action.startsWith("install")) ? 60000 : 10000;
+    if (!process.waitForFinished(timeoutMs)) {
+        process.kill();
+        return QString("Command timed out: %1").arg(action);
+    }
+    return QString::fromUtf8(process.readAll());
 }
 
 void ServiceSetupDialog::RefreshStatus() {
@@ -237,27 +248,31 @@ void ServiceSetupDialog::UpdateUiFromStatus(const QMap<QString, QString>& status
 
 void ServiceSetupDialog::OnStartService() {
     lblFeedback_->setText("Starting daemon service...");
-    RunSetupCommand("start-user");
-    lblFeedback_->setText("Daemon service started.");
+    qApp->processEvents();
+    QString out = RunSetupCommand("start-user");
+    lblFeedback_->setText(out.trimmed().isEmpty() ? "Daemon service started." : out.trimmed());
     RefreshStatus();
 }
 
 void ServiceSetupDialog::OnStopService() {
     lblFeedback_->setText("Stopping daemon service...");
-    RunSetupCommand("stop-user");
-    lblFeedback_->setText("Daemon service stopped.");
+    qApp->processEvents();
+    QString out = RunSetupCommand("stop-user");
+    lblFeedback_->setText(out.trimmed().isEmpty() ? "Daemon service stopped." : out.trimmed());
     RefreshStatus();
 }
 
 void ServiceSetupDialog::OnEnableService() {
     lblFeedback_->setText("Enabling user daemon service...");
-    RunSetupCommand("enable-user");
-    lblFeedback_->setText("Daemon service enabled and active.");
+    qApp->processEvents();
+    QString out = RunSetupCommand("enable-user");
+    lblFeedback_->setText(out.trimmed().isEmpty() ? "Daemon service enabled." : out.trimmed());
     RefreshStatus();
 }
 
 void ServiceSetupDialog::OnInstallUdevRules() {
     lblFeedback_->setText("Requesting root permissions via pkexec to install udev rules...");
+    qApp->processEvents();
     QString output = RunSetupCommand("install-udev");
     lblFeedback_->setText(output.trimmed().isEmpty() ? "Udev setup finished." : output.trimmed());
     RefreshStatus();
@@ -265,6 +280,7 @@ void ServiceSetupDialog::OnInstallUdevRules() {
 
 void ServiceSetupDialog::OnInstallLayers() {
     lblFeedback_->setText("Installing Vulkan layers (64-bit and 32-bit)...");
+    qApp->processEvents();
     QString output = RunSetupCommand("install-layers");
     lblFeedback_->setText(output.trimmed().isEmpty() ? "Vulkan layers installed." : output.trimmed());
     RefreshStatus();

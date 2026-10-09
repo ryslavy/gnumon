@@ -29,6 +29,8 @@ cp -f "${SCRIPT_DIR}/scripts/gnumon-run" "$APPDIR/usr/bin/"
 cp -f "${SCRIPT_DIR}/scripts/setup-service.sh" "$APPDIR/usr/bin/"
 cp -f "${SCRIPT_DIR}/scripts/install-layers.sh" "$APPDIR/usr/bin/"
 cp -f "${SCRIPT_DIR}/scripts/uninstall-layers.sh" "$APPDIR/usr/bin/"
+cp -f "${SCRIPT_DIR}/scripts/99-gnumon-input.rules" "$APPDIR/usr/bin/"
+chmod +x "$APPDIR"/usr/bin/*
 mkdir -p "$APPDIR/usr/lib/udev/rules.d"
 cp -f "${SCRIPT_DIR}/scripts/99-gnumon-input.rules" "$APPDIR/usr/lib/udev/rules.d/"
 
@@ -182,6 +184,7 @@ chmod +x "$APPDIR/AppRun"
 # 9. Build AppImage using appimagetool
 APPIMAGE_OUTPUT="${OUT_DIR}/gnumon-0.1.0-x86_64.AppImage"
 echo "==> Generating AppImage: ${APPIMAGE_OUTPUT}..."
+rm -f "$APPIMAGE_OUTPUT"
 ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$APPIMAGE_OUTPUT"
 
 echo "==> Successfully created ${APPIMAGE_OUTPUT}"
