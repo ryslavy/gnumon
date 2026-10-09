@@ -18,6 +18,7 @@ struct GpuMetrics {
 
     // Power & Voltage
     double powerWatts = 0.0;
+    double powerLimitWatts = 0.0;
     double voltageMv = 0.0;
 
     // Temperatures (°C)

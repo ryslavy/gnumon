@@ -1,2 +1,3 @@
-# gnumon - Global evdev input hotkey access for current active desktop user
+# gnumon - Global evdev input hotkey and mouse click-to-photon latency access for current active desktop user
 KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", TAG+="uaccess"

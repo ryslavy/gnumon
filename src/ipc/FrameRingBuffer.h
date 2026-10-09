@@ -33,6 +33,11 @@ struct alignas(64) FrameEvent {
     uint64_t displayTimestampNs = 0; // PM_METRIC_UNTIL_DISPLAYED
     uint32_t dropped = 0;            // PM_METRIC_DROPPED_FRAMES
     uint32_t frameType = 2;          // PM_FRAME_TYPE_APPLICATION (2), AMD_AFMF (100), INTEL_XEFG (50)
+
+    // Pipeline State Object (PSO) & Shader Compilation Tracking
+    uint32_t psoCompileCount = 0;
+    uint32_t reservedPad = 0;
+    uint64_t psoCompileDurationNs = 0;
 };
 
 struct alignas(64) TelemetrySnapshot {

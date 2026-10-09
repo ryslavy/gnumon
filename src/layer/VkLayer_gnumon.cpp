@@ -47,6 +47,8 @@ struct DeviceDispatch {
     PFN_vkGetSwapchainImagesKHR getSwapchainImagesKHR = nullptr;
     PFN_vkGetDeviceQueue getDeviceQueue = nullptr;
     PFN_vkGetDeviceQueue2 getDeviceQueue2 = nullptr;
+    PFN_vkCreateGraphicsPipelines createGraphicsPipelines = nullptr;
+    PFN_vkCreateComputePipelines createComputePipelines = nullptr;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     PFN_vkGetInstanceProcAddr getInstProcAddr = nullptr;
     uint32_t defaultQueueFamilyIndex = 0;
@@ -87,6 +89,8 @@ std::atomic<uint32_t> g_frameId{0};
 std::atomic<uint64_t> g_lastPresentStartNs{0};
 std::atomic<uint64_t> g_currentGpuSubmitStartNs{0};
 std::atomic<uint64_t> g_lastGpuSubmitEndNs{0};
+std::atomic<uint32_t> g_psoCompileCount{0};
+std::atomic<uint64_t> g_psoCompileDurationNs{0};
 static int GetConfiguredHudCorner() {
     const char* envCorner = getenv("GNUMON_CORNER");
     if (envCorner) {
@@ -281,6 +285,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateDevice(
         disp.getSwapchainImagesKHR = reinterpret_cast<PFN_vkGetSwapchainImagesKHR>(nextGDPA(*pDevice, "vkGetSwapchainImagesKHR"));
         disp.getDeviceQueue = reinterpret_cast<PFN_vkGetDeviceQueue>(nextGDPA(*pDevice, "vkGetDeviceQueue"));
         disp.getDeviceQueue2 = reinterpret_cast<PFN_vkGetDeviceQueue2>(nextGDPA(*pDevice, "vkGetDeviceQueue2"));
+        disp.createGraphicsPipelines = reinterpret_cast<PFN_vkCreateGraphicsPipelines>(nextGDPA(*pDevice, "vkCreateGraphicsPipelines"));
+        disp.createComputePipelines = reinterpret_cast<PFN_vkCreateComputePipelines>(nextGDPA(*pDevice, "vkCreateComputePipelines"));
         disp.physicalDevice = physicalDevice;
         disp.getInstProcAddr = nextGIPA;
         if (pCreateInfo && pCreateInfo->queueCreateInfoCount > 0 && pCreateInfo->pQueueCreateInfos) {
@@ -512,6 +518,60 @@ static VKAPI_ATTR void VKAPI_CALL gnumon_vkDestroySwapchainKHR(
     if (nextFunc) {
         nextFunc(device, swapchain, pAllocator);
     }
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateGraphicsPipelines(
+    VkDevice device,
+    VkPipelineCache pipelineCache,
+    uint32_t createInfoCount,
+    const VkGraphicsPipelineCreateInfo* pCreateInfos,
+    const VkAllocationCallbacks* pAllocator,
+    VkPipeline* pPipelines)
+{
+    uint64_t start = gnumon::common::Clock::GetTimestampNs();
+    PFN_vkCreateGraphicsPipelines nextFunc = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_dispatchMutex);
+        auto it = g_deviceDispatch.find(GetDispatchKey(device));
+        if (it != g_deviceDispatch.end()) {
+            nextFunc = it->second.createGraphicsPipelines;
+        }
+    }
+    VkResult res = VK_ERROR_INITIALIZATION_FAILED;
+    if (nextFunc) {
+        res = nextFunc(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
+    }
+    uint64_t duration = gnumon::common::Clock::GetTimestampNs() - start;
+    g_psoCompileCount.fetch_add(createInfoCount, std::memory_order_relaxed);
+    g_psoCompileDurationNs.fetch_add(duration, std::memory_order_relaxed);
+    return res;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateComputePipelines(
+    VkDevice device,
+    VkPipelineCache pipelineCache,
+    uint32_t createInfoCount,
+    const VkComputePipelineCreateInfo* pCreateInfos,
+    const VkAllocationCallbacks* pAllocator,
+    VkPipeline* pPipelines)
+{
+    uint64_t start = gnumon::common::Clock::GetTimestampNs();
+    PFN_vkCreateComputePipelines nextFunc = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_dispatchMutex);
+        auto it = g_deviceDispatch.find(GetDispatchKey(device));
+        if (it != g_deviceDispatch.end()) {
+            nextFunc = it->second.createComputePipelines;
+        }
+    }
+    VkResult res = VK_ERROR_INITIALIZATION_FAILED;
+    if (nextFunc) {
+        res = nextFunc(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
+    }
+    uint64_t duration = gnumon::common::Clock::GetTimestampNs() - start;
+    g_psoCompileCount.fetch_add(createInfoCount, std::memory_order_relaxed);
+    g_psoCompileDurationNs.fetch_add(duration, std::memory_order_relaxed);
+    return res;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkAcquireNextImageKHR(
@@ -976,6 +1036,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
     event.gpuWaitNs = gpuWait;
     event.displayTimestampNs = presentEndNs;
     event.dropped = (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) ? 1 : 0;
+    event.psoCompileCount = g_psoCompileCount.exchange(0, std::memory_order_relaxed);
+    event.psoCompileDurationNs = g_psoCompileDurationNs.exchange(0, std::memory_order_relaxed);
 
     // Frame Generation Detection (FSR3 / AFMF / XeFG)
     bool isGenerated = !g_hasAcquiredImage;
@@ -1029,6 +1091,10 @@ VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL gnumon_vkGetDeviceProcA
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkGetDeviceQueue);
     if (std::strcmp(pName, "vkGetDeviceQueue2") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkGetDeviceQueue2);
+    if (std::strcmp(pName, "vkCreateGraphicsPipelines") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkCreateGraphicsPipelines);
+    if (std::strcmp(pName, "vkCreateComputePipelines") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkCreateComputePipelines);
 
     PFN_vkGetDeviceProcAddr nextGDPA = nullptr;
     {
@@ -1077,6 +1143,10 @@ VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL gnumon_vkGetInstancePro
 #endif
     if (std::strcmp(pName, "vkGetSwapchainImagesKHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkGetSwapchainImagesKHR);
+    if (std::strcmp(pName, "vkCreateGraphicsPipelines") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkCreateGraphicsPipelines);
+    if (std::strcmp(pName, "vkCreateComputePipelines") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkCreateComputePipelines);
     if (std::strcmp(pName, "vkGetDeviceQueue") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(gnumon_vkGetDeviceQueue);
     if (std::strcmp(pName, "vkGetDeviceQueue2") == 0)

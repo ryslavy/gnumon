@@ -12,6 +12,7 @@
 #include "MetricsConfigDialog.h"
 #include "SettingsDialog.h"
 #include "AllMetricsDialog.h"
+#include "ServiceSetupDialog.h"
 #include "AppConfig.h"
 #include "PresentMonOverlay.h"
 
@@ -30,6 +31,7 @@ public:
 
 public slots:
     void OnOpenFullMetrics();
+    void OnOpenServiceSetup();
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -68,6 +70,7 @@ private:
     QPushButton *btnRefreshProcess_ = nullptr;
     QPushButton *btnConfigMetrics_ = nullptr;
     QPushButton *btnSettings_ = nullptr;
+    QPushButton *btnServiceSetup_ = nullptr;
     QPushButton *btnInstallLayer_ = nullptr;
     QPushButton *btnInGameOverlay_ = nullptr;
     QPushButton *btnOverlay_ = nullptr;
@@ -76,6 +79,7 @@ private:
     QPushButton *btnRecord_ = nullptr;
     QPushButton *btnFullMetrics_ = nullptr;
     AllMetricsDialog *allMetricsDialog_ = nullptr;
+    ServiceSetupDialog *serviceSetupDialog_ = nullptr;
     QString currentCapturePath_;
     QWidget *topContainer_ = nullptr;
     FrametimeGraphWidget *graphWidget_ = nullptr;

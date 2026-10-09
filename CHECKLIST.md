@@ -93,4 +93,11 @@ Kompletní seznam funkcí a metrik podle referenčního Intel PresentMon 2.6.0 p
 - [x] Výběr sledovaného procesu z běžících aplikací (`comboProcess_` ze skenu `/proc`)
 - [x] Nahrávání a ukládání CSV přímo z GUI
 - [x] In-Game Overlay (zobrazení statistik přímo ve hře přes Vulkan swapchain)
+- [x] In-Game osciloskop snímkových časů (frametime oscilloscope) s referenčními linkami 60 FPS / 33 FPS
+- [x] 3 přepínatelné presety in-game overlaye (F8: Compact, Standard s osciloskopem, Detailed) a OSD toasty
+- [x] 32-bit multilib podpora (`lib32/libVkLayer_gnumon.so`, `lib32/libgnumon_gl.so`) pro 32-bit Proton/Wine hry
+- [x] Sledování kompilace shaderů a PSO v reálném čase (`vkCreateGraphicsPipelines`, `vkCreateComputePipelines`, `PM_METRIC_PSO_COMPILE_COUNT`, `PM_METRIC_PSO_COMPILE_TIME`, `PM_METRIC_PSO_COMPILE_BUSY_PERCENT`)
+- [x] Dynamické hardwarové limity příkonu (AMD hwmon `power1_cap`, NVIDIA NVML limits, CPU RAPL constraints)
+- [x] LACT-style Service & Setup dialog (`ServiceSetupDialog` v GUI, `setup-service.sh`, `99-gnumon-input.rules`) pro správu daemona a uaccess oprávnění pro měření latence myši / kláves bez nutnosti rootu
 - [x] Konfigurační dialog pro výběr sledovaných metrik
+- [x] All PresentMon Metrics Inspector okno (80+ metrik, grafy, limity)

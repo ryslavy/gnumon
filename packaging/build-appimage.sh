@@ -18,16 +18,19 @@ fi
 
 # 2. Clean and create AppDir structure
 rm -rf "$APPDIR"
-mkdir -p "$APPDIR"/usr/{bin,lib,plugins,share/icons/hicolor/scalable/apps,share/applications}
+mkdir -p "$APPDIR"/usr/{bin,lib,lib32,plugins,share/icons/hicolor/scalable/apps,share/applications}
 
-# 3. Copy binaries
+# 3. Copy binaries & scripts
 echo "==> Copying binaries..."
 cp -f "${SCRIPT_DIR}/build-host/gnumon-gui" "$APPDIR/usr/bin/"
 cp -f "${SCRIPT_DIR}/build-host/gnumon-cli" "$APPDIR/usr/bin/"
 cp -f "${SCRIPT_DIR}/build-host/gnumond" "$APPDIR/usr/bin/"
 cp -f "${SCRIPT_DIR}/scripts/gnumon-run" "$APPDIR/usr/bin/"
+cp -f "${SCRIPT_DIR}/scripts/setup-service.sh" "$APPDIR/usr/bin/"
 cp -f "${SCRIPT_DIR}/scripts/install-layers.sh" "$APPDIR/usr/bin/"
 cp -f "${SCRIPT_DIR}/scripts/uninstall-layers.sh" "$APPDIR/usr/bin/"
+mkdir -p "$APPDIR/usr/lib/udev/rules.d"
+cp -f "${SCRIPT_DIR}/scripts/99-gnumon-input.rules" "$APPDIR/usr/lib/udev/rules.d/"
 
 # 4. Copy libraries
 echo "==> Copying gnumon libraries..."
@@ -38,6 +41,15 @@ if [ -f "${SCRIPT_DIR}/build-container/libVkLayer_gnumon.so" ]; then
 else
     cp -f "${SCRIPT_DIR}/build-host/libVkLayer_gnumon.so" "$APPDIR/usr/lib/"
     cp -f "${SCRIPT_DIR}/build-host/libgnumon_gl.so" "$APPDIR/usr/lib/"
+fi
+
+# 32-bit Multilib libraries
+if [ -f "${SCRIPT_DIR}/build-container/lib32/libVkLayer_gnumon.so" ]; then
+    cp -f "${SCRIPT_DIR}/build-container/lib32/libVkLayer_gnumon.so" "$APPDIR/usr/lib32/"
+    cp -f "${SCRIPT_DIR}/build-container/lib32/libgnumon_gl.so" "$APPDIR/usr/lib32/"
+elif [ -f "${SCRIPT_DIR}/build-host/lib32/libVkLayer_gnumon.so" ]; then
+    cp -f "${SCRIPT_DIR}/build-host/lib32/libVkLayer_gnumon.so" "$APPDIR/usr/lib32/"
+    cp -f "${SCRIPT_DIR}/build-host/lib32/libgnumon_gl.so" "$APPDIR/usr/lib32/"
 fi
 
 # 5. Copy Qt6 plugins
@@ -142,6 +154,10 @@ export QT_PLUGIN_PATH="${APPDIR}/usr/plugins"
 export XDG_DATA_DIRS="${APPDIR}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
 case "${1:-}" in
+    setup-service|--setup-service)
+        shift
+        exec "${APPDIR}/usr/bin/setup-service.sh" "$@"
+        ;;
     install-layer|--install-layer)
         shift
         exec "${APPDIR}/usr/bin/install-layers.sh" "$@"

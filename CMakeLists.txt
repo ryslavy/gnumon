@@ -121,6 +121,69 @@ target_include_directories(gnumon_gl PRIVATE
     src/common
 )
 
+# 5c. 32-bit Multilib Layers (libVkLayer_gnumon.so & libgnumon_gl.so for 32-bit Proton / Wine games)
+include(CheckCXXCompilerFlag)
+set(CMAKE_REQUIRED_FLAGS "-m32")
+set(CMAKE_REQUIRED_LINK_OPTIONS "-m32")
+check_cxx_compiler_flag("-m32" COMPILER_SUPPORTS_M32)
+unset(CMAKE_REQUIRED_FLAGS)
+unset(CMAKE_REQUIRED_LINK_OPTIONS)
+
+if(COMPILER_SUPPORTS_M32)
+    message(STATUS "32-bit multilib supported: enabling 32-bit Vulkan & OpenGL layer targets")
+
+    add_library(gnumon_common_32 STATIC
+        src/common/Clock.cpp
+    )
+    target_compile_options(gnumon_common_32 PRIVATE -m32 -fPIC)
+    target_include_directories(gnumon_common_32 PUBLIC
+        include
+        src/common
+    )
+
+    if(TARGET VkLayer_gnumon)
+        add_library(VkLayer_gnumon_32 SHARED
+            src/layer/VkLayer_gnumon.cpp
+        )
+        target_compile_options(VkLayer_gnumon_32 PRIVATE -m32 -fPIC)
+        target_link_options(VkLayer_gnumon_32 PRIVATE -m32 -static-libstdc++ -static-libgcc)
+        target_link_libraries(VkLayer_gnumon_32 PRIVATE
+            gnumon_common_32
+        )
+        if(Vulkan_INCLUDE_DIRS)
+            target_include_directories(VkLayer_gnumon_32 PRIVATE ${Vulkan_INCLUDE_DIRS})
+        endif()
+        target_include_directories(VkLayer_gnumon_32 PRIVATE
+            include
+            src/ipc
+            src/common
+        )
+        set_target_properties(VkLayer_gnumon_32 PROPERTIES
+            OUTPUT_NAME "VkLayer_gnumon"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib32"
+        )
+    endif()
+
+    add_library(gnumon_gl_32 SHARED
+        src/layer/gl_wrapper.cpp
+    )
+    target_compile_options(gnumon_gl_32 PRIVATE -m32 -fPIC)
+    target_link_options(gnumon_gl_32 PRIVATE -m32 -static-libstdc++ -static-libgcc)
+    target_link_libraries(gnumon_gl_32 PRIVATE
+        gnumon_common_32
+        ${CMAKE_DL_LIBS}
+    )
+    target_include_directories(gnumon_gl_32 PRIVATE
+        include
+        src/ipc
+        src/common
+    )
+    set_target_properties(gnumon_gl_32 PROPERTIES
+        OUTPUT_NAME "gnumon_gl"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib32"
+    )
+endif()
+
 # 6. CLI Tool (gnumon-cli)
 add_executable(gnumon-cli
     src/cli/main.cpp
@@ -157,6 +220,8 @@ if(Qt6_FOUND)
         src/gui/AllMetricsDialog.h
         src/gui/MetricGraphWidget.cpp
         src/gui/MetricGraphWidget.h
+        src/gui/ServiceSetupDialog.cpp
+        src/gui/ServiceSetupDialog.h
         src/gui/PresentMonOverlay.cpp
         src/gui/PresentMonOverlay.h
     )
@@ -200,6 +265,14 @@ if(TARGET gnumon_gl)
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
 endif()
+if(TARGET VkLayer_gnumon_32)
+    install(TARGETS VkLayer_gnumon_32
+        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}32"
+    )
+    install(TARGETS gnumon_gl_32
+        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}32"
+    )
+endif()
 install(DIRECTORY include/gnumon
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
@@ -211,6 +284,7 @@ install(FILES scripts/99-gnumon-input.rules
 )
 install(PROGRAMS
     scripts/gnumon-run
+    scripts/setup-service.sh
     scripts/install-layers.sh
     scripts/uninstall-layers.sh
     DESTINATION ${CMAKE_INSTALL_BINDIR}

@@ -45,6 +45,7 @@ private:
     typedef nvmlReturn_t (*nvmlDeviceGetClockInfo_f)(nvmlDevice_t, int, unsigned int*);
     typedef nvmlReturn_t (*nvmlDeviceGetMemoryInfo_f)(nvmlDevice_t, nvmlMemory_t*);
     typedef nvmlReturn_t (*nvmlDeviceGetFanSpeed_f)(nvmlDevice_t, unsigned int*);
+    typedef nvmlReturn_t (*nvmlDeviceGetPowerManagementLimit_f)(nvmlDevice_t, unsigned int*);
 
     nvmlInit_f nvmlInit_ = nullptr;
     nvmlShutdown_f nvmlShutdown_ = nullptr;
@@ -57,6 +58,7 @@ private:
     nvmlDeviceGetClockInfo_f nvmlDeviceGetClockInfo_ = nullptr;
     nvmlDeviceGetMemoryInfo_f nvmlDeviceGetMemoryInfo_ = nullptr;
     nvmlDeviceGetFanSpeed_f nvmlDeviceGetFanSpeed_ = nullptr;
+    nvmlDeviceGetPowerManagementLimit_f nvmlDeviceGetPowerManagementLimit_ = nullptr;
 };
 
 } // namespace gnumon::control

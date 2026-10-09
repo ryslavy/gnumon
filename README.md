@@ -11,17 +11,23 @@ Linux-native port of Intel PresentMon providing real-time frame timing, GPU/CPU 
 - **Frametime & Pacing Analysis**:
   - Displayed FPS, Presented FPS, and Application FPS (distinguishing native application frames from FSR 3 / DLSS 3 frame generation).
   - CPU frame time, GPU busy time, GPU wait time, render-to-display latency, and animation error.
+  - Real-time **Pipeline State Object (PSO) & Shader Compilation Tracking** (`vkCreateGraphicsPipelines`, `vkCreateComputePipelines`) to detect stutter and shader compilation spikes.
   - 1% Low and 0.1% Low framerates.
-- **In-Game Swapchain Overlay**:
+- **In-Game Swapchain Overlay & 32-Bit Multilib Support**:
   - Injected directly into the game's swapchain with zero compositor latency.
+  - **Full 64-bit & 32-bit Multilib Hooking**: Seamlessly captures both 64-bit and legacy 32-bit Proton / Wine games (`VkLayer_gnumon.so`, `VkLayer_gnumon_32.so`, OpenGL wrappers).
   - **Real-time Frametime Oscilloscope** with 16.6 ms (60 FPS) and 33.3 ms (30 FPS) reference lines.
   - **3 Presets (F8)**: Compact pill, Standard (with oscilloscope), and Detailed (expanded telemetry).
   - **OSD Toast Banners**: On-screen visual feedback for overlay toggles, preset changes, and benchmark states.
-- **Hardware Telemetry**:
-  - **AMD GPUs**: Linux DRM and hwmon (power, edge/hotspot/memory temperatures, core/memory clocks, VRAM usage, fan RPM, voltage).
-  - **NVIDIA GPUs**: NVML dynamic runtime integration (power, temperatures, clocks, VRAM usage, GPU utilization).
+- **Hardware Telemetry & Dynamic Power Limits**:
+  - **AMD GPUs**: Linux DRM and hwmon (power, hardware power limit `power1_cap`, edge/hotspot/memory temperatures, core/memory clocks, VRAM usage, fan RPM, voltage).
+  - **NVIDIA GPUs**: NVML dynamic runtime integration (power, dynamic power management limits, temperatures, clocks, VRAM usage, GPU utilization).
   - **Intel Arc / iGPU**: DRM sysfs and hwmon sensors.
-  - **CPUs**: sysfs RAPL power caps, coretemp/k10temp temperatures, per-core utilization, and cpufreq clock speeds.
+  - **CPUs**: sysfs RAPL power caps (`constraint_0_power_limit_uj`), coretemp/k10temp temperatures, per-core utilization, and cpufreq clock speeds.
+- **LACT-Style Service & Permissions Setup**:
+  - Built-in GUI Manager (`⚡ Service & Setup...`) for 1-click installation and management.
+  - Systemd user and system daemon (`gnumond`) control (Start, Stop, Enable, Disable).
+  - Polkit/pkexec udev rule installer (`99-gnumon-input.rules` with `uaccess`) granting non-root access to mouse click-to-photon latency and global hotkeys under Wayland and Gamescope.
 - **Global Hotkeys** (Works across Wayland, Gamescope, and fullscreen games without window focus):
   - **F8**: Cycle In-Game Overlay Presets (Compact → Standard → Detailed).
   - **F9**: Toggle In-Game Overlay HUD.

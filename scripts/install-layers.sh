@@ -137,6 +137,37 @@ EOF
 # Copy layer library directly to implicit and explicit directories for reliable loader resolution
 cp -f "$DEST_LIB/libVkLayer_gnumon.so" "$DEST_IMPLICIT/"
 cp -f "$DEST_LIB/libVkLayer_gnumon.so" "$DEST_EXPLICIT/"
+cp -f "$DEST_IMPLICIT/VkLayer_gnumon.json" "$DEST_IMPLICIT/VkLayer_gnumon.x86_64.json"
+cp -f "$DEST_EXPLICIT/VkLayer_gnumon.json" "$DEST_EXPLICIT/VkLayer_gnumon.x86_64.json"
+
+# Check and copy 32-bit multilib layers (for 32-bit Proton / Wine games)
+LIB32_DIR=""
+for p in "$LIB_DIR/lib32" "$LIB_DIR/../lib32" "$SOURCE_DIR/build-host/lib32" "$SOURCE_DIR/build-container/lib32" "$SOURCE_DIR/lib32" "$SOURCE_DIR/usr/lib32"; do
+    if [ -f "$p/libVkLayer_gnumon.so" ]; then
+        LIB32_DIR="$p"
+        break
+    fi
+done
+
+if [ -n "$LIB32_DIR" ]; then
+    echo "==> Found 32-bit multilib layers at $LIB32_DIR, installing..."
+    mkdir -p "$DEST_LIB/lib32"
+    cp -f "$LIB32_DIR/libVkLayer_gnumon.so" "$DEST_LIB/lib32/"
+    if [ -f "$LIB32_DIR/libgnumon_gl.so" ]; then
+        cp -f "$LIB32_DIR/libgnumon_gl.so" "$DEST_LIB/lib32/"
+    fi
+
+    # 32-bit Implicit Layer Manifest
+    sed "s|\"$DEST_LIB/libVkLayer_gnumon.so\"|\"$DEST_LIB/lib32/libVkLayer_gnumon.so\"|g; s|\"gnumon Linux PresentMon frame capture layer\"|\"gnumon Linux PresentMon 32-bit frame capture layer\"|g" \
+        "$DEST_IMPLICIT/VkLayer_gnumon.json" > "$DEST_IMPLICIT/VkLayer_gnumon.i686.json"
+    cp -f "$DEST_IMPLICIT/VkLayer_gnumon.i686.json" "$DEST_IMPLICIT/VkLayer_gnumon.x86.json"
+
+    # 32-bit Explicit Layer Manifest
+    sed "s|\"$DEST_LIB/libVkLayer_gnumon.so\"|\"$DEST_LIB/lib32/libVkLayer_gnumon.so\"|g; s|\"gnumon Linux PresentMon frame capture layer\"|\"gnumon Linux PresentMon 32-bit frame capture layer\"|g" \
+        "$DEST_EXPLICIT/VkLayer_gnumon.json" > "$DEST_EXPLICIT/VkLayer_gnumon.i686.json"
+    cp -f "$DEST_EXPLICIT/VkLayer_gnumon.i686.json" "$DEST_EXPLICIT/VkLayer_gnumon.x86.json"
+    echo "==> 32-bit multilib Vulkan layer registered successfully!"
+fi
 
 # Register layer into Flatpak Steam if present
 FLATPAK_DIR="$HOME/.var/app/com.valvesoftware.Steam"
@@ -146,6 +177,12 @@ if [ -d "$FLATPAK_DIR" ]; then
     mkdir -p "$FLATPAK_IMPLICIT"
     cp -f "$DEST_LIB/libVkLayer_gnumon.so" "$FLATPAK_IMPLICIT/"
     sed "s|\"$DEST_LIB/libVkLayer_gnumon.so\"|\"$FLATPAK_IMPLICIT/libVkLayer_gnumon.so\"|g" "$DEST_IMPLICIT/VkLayer_gnumon.json" > "$FLATPAK_IMPLICIT/VkLayer_gnumon.json"
+    if [ -f "$DEST_LIB/lib32/libVkLayer_gnumon.so" ]; then
+        mkdir -p "$FLATPAK_DIR/.local/lib/gnumon/lib32"
+        cp -f "$DEST_LIB/lib32/libVkLayer_gnumon.so" "$FLATPAK_DIR/.local/lib/gnumon/lib32/"
+        sed "s|\"$DEST_LIB/lib32/libVkLayer_gnumon.so\"|\"$FLATPAK_DIR/.local/lib/gnumon/lib32/libVkLayer_gnumon.so\"|g" \
+            "$DEST_IMPLICIT/VkLayer_gnumon.i686.json" > "$FLATPAK_IMPLICIT/VkLayer_gnumon.i686.json"
+    fi
 fi
 
 echo "==> Successfully installed gnumon layer & tools!"

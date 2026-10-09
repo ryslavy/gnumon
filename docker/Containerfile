@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     g++-12 \
     gcc-12 \
+    gcc-12-multilib \
+    g++-12-multilib \
     cmake \
     ninja-build \
     pkg-config \
@@ -22,5 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set GCC 12 as default for full C++20 support
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100 \
     --slave /usr/bin/g++ g++ /usr/bin/g++-12
+
+# Fix Debian/Ubuntu multilib asm headers
+RUN ln -s /usr/include/x86_64-linux-gnu/asm /usr/include/asm
 
 WORKDIR /workspace

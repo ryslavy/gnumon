@@ -14,6 +14,7 @@ struct CpuMetrics {
     uint32_t coreCount = 0;
     double cpuUtilizationPercent = 0.0;
     double cpuPackagePowerWatts = 0.0;
+    double cpuPowerLimitWatts = 0.0;
     double cpuTemperatureC = 0.0;
     double cpuFrequencyMhz = 0.0;
     std::vector<double> perCoreUtilization;

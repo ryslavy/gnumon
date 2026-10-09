@@ -184,6 +184,10 @@ MainWindow::MainWindow(QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    if (serviceSetupDialog_) {
+        delete serviceSetupDialog_;
+        serviceSetupDialog_ = nullptr;
+    }
     if (allMetricsDialog_) {
         delete allMetricsDialog_;
         allMetricsDialog_ = nullptr;
@@ -242,6 +246,11 @@ void MainWindow::SetupUi() {
     btnSettings_->setStyleSheet("padding: 5px 12px; font-weight: bold; background-color: #263238; border: 1px solid #455a64; border-radius: 4px;");
     connect(btnSettings_, &QPushButton::clicked, this, &MainWindow::OnConfigureSettings);
 
+    btnServiceSetup_ = new QPushButton("⚡ Service & Setup...", this);
+    btnServiceSetup_->setToolTip("Manage background daemon, non-root input permissions, and 64/32-bit Vulkan/OpenGL layers");
+    btnServiceSetup_->setStyleSheet("padding: 5px 12px; font-weight: bold; background-color: #1565c0; color: white; border: 1px solid #1e88e5; border-radius: 4px;");
+    connect(btnServiceSetup_, &QPushButton::clicked, this, &MainWindow::OnOpenServiceSetup);
+
     const char* homeDir = std::getenv("HOME");
     bool layerInstalled = false;
     if (homeDir) {
@@ -263,6 +272,7 @@ void MainWindow::SetupUi() {
     row1Layout->addStretch();
     row1Layout->addWidget(btnFullMetrics_);
     row1Layout->addWidget(btnSettings_);
+    row1Layout->addWidget(btnServiceSetup_);
     row1Layout->addWidget(btnInstallLayer_);
     topLayout->addWidget(row1);
 
@@ -1112,6 +1122,16 @@ void MainWindow::OnOpenFullMetrics() {
     allMetricsDialog_->show();
     allMetricsDialog_->raise();
     allMetricsDialog_->activateWindow();
+}
+
+void MainWindow::OnOpenServiceSetup() {
+    if (!serviceSetupDialog_) {
+        serviceSetupDialog_ = new ServiceSetupDialog(this);
+    }
+    serviceSetupDialog_->RefreshStatus();
+    serviceSetupDialog_->show();
+    serviceSetupDialog_->raise();
+    serviceSetupDialog_->activateWindow();
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event) {

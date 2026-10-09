@@ -160,6 +160,11 @@ bool CpuTelemetry::Sample(CpuMetrics& metrics) {
         lastRaplEnergyUj_ = currentEnergyUj;
     }
 
+    std::filesystem::path capPath = "/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uj";
+    if (std::filesystem::exists(capPath)) {
+        metrics.cpuPowerLimitWatts = ReadSysfsDouble(capPath, 1'000'000.0);
+    }
+
     // 3. Read CPU Temperature (°C)
     if (!cpuHwmonPath_.empty()) {
         metrics.cpuTemperatureC = ReadSysfsDouble(cpuHwmonPath_ / "temp1_input", 1000.0);

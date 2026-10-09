@@ -86,6 +86,9 @@ bool AmdGpuTelemetry::Sample(GpuMetrics& metrics) {
 
         // Power: power1_average is in microWatts -> Watts
         metrics.powerWatts = ReadSysfsDouble(hwmonPath_ / "power1_average", 1'000'000.0);
+        if (std::filesystem::exists(hwmonPath_ / "power1_cap")) {
+            metrics.powerLimitWatts = ReadSysfsDouble(hwmonPath_ / "power1_cap", 1'000'000.0);
+        }
 
         // Temperatures: milliCelsius -> Celsius
         metrics.temperatureEdgeC = ReadSysfsDouble(hwmonPath_ / "temp1_input", 1000.0);

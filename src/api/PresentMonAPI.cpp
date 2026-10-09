@@ -391,7 +391,34 @@ PRESENTMON_API2_EXPORT PM_STATUS pmPollDynamicQuery(
                 break;
             case PM_METRIC_GPU_POWER_LIMITED:
                 if (elem.dataSize >= sizeof(uint32_t)) {
-                    *reinterpret_cast<uint32_t*>(dest) = 0;
+                    *reinterpret_cast<uint32_t*>(dest) = (gpu.powerLimitWatts > 0.0 && gpu.powerWatts >= gpu.powerLimitWatts * 0.98) ? 1 : 0;
+                }
+                break;
+            case PM_METRIC_GPU_SUSTAINED_POWER_LIMIT:
+                if (elem.dataSize >= sizeof(double)) {
+                    *reinterpret_cast<double*>(dest) = (gpu.powerLimitWatts > 0.0) ? gpu.powerLimitWatts : 160.0;
+                }
+                break;
+            case PM_METRIC_CPU_POWER_LIMIT:
+                if (elem.dataSize >= sizeof(double)) {
+                    *reinterpret_cast<double*>(dest) = (cpu.cpuPowerLimitWatts > 0.0) ? cpu.cpuPowerLimitWatts : 125.0;
+                }
+                break;
+            case PM_METRIC_PSO_COMPILE_COUNT:
+                if (elem.dataSize >= sizeof(uint32_t)) {
+                    *reinterpret_cast<uint32_t*>(dest) = hasFrame ? frame.psoCompileCount : 0;
+                }
+                break;
+            case PM_METRIC_PSO_COMPILE_TIME:
+                if (elem.dataSize >= sizeof(double)) {
+                    *reinterpret_cast<double*>(dest) = hasFrame ? (static_cast<double>(frame.psoCompileDurationNs) / 1'000'000.0) : 0.0;
+                }
+                break;
+            case PM_METRIC_PSO_COMPILE_BUSY_PERCENT:
+                if (elem.dataSize >= sizeof(double)) {
+                    double psoMs = hasFrame ? (static_cast<double>(frame.psoCompileDurationNs) / 1'000'000.0) : 0.0;
+                    double ftMs = hasFrame && frame.frameTimeNs > 0 ? (static_cast<double>(frame.frameTimeNs) / 1'000'000.0) : 16.6;
+                    *reinterpret_cast<double*>(dest) = (ftMs > 0.0 && psoMs > 0.0) ? std::min(100.0, (psoMs / ftMs) * 100.0) : 0.0;
                 }
                 break;
             default:
@@ -883,7 +910,7 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(
     pSnapshot->cpuCoreCount = cpu.coreCount;
     pSnapshot->cpuUtilizationPercent = cpu.cpuUtilizationPercent;
     pSnapshot->cpuPackagePowerWatts = cpu.cpuPackagePowerWatts;
-    pSnapshot->cpuPowerLimitWatts = 125.0;
+    pSnapshot->cpuPowerLimitWatts = (cpu.cpuPowerLimitWatts > 0.0) ? cpu.cpuPowerLimitWatts : 125.0;
     pSnapshot->cpuTemperatureC = cpu.cpuTemperatureC;
     pSnapshot->cpuFrequencyMhz = cpu.cpuFrequencyMhz;
     pSnapshot->cpuBusyMs = (hasFrame && frame.presentStartTimestampNs >= frame.cpuStartTimestampNs && frame.cpuStartTimestampNs > 0)
@@ -908,7 +935,7 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(
     pSnapshot->gpuFrequencyMhz = gpu.gpuFrequencyMhz;
     pSnapshot->gpuEffectiveFrequencyMhz = gpu.gpuFrequencyMhz;
     pSnapshot->gpuPowerWatts = gpu.powerWatts;
-    pSnapshot->gpuSustainedPowerLimitWatts = 160.0;
+    pSnapshot->gpuSustainedPowerLimitWatts = (gpu.powerLimitWatts > 0.0) ? gpu.powerLimitWatts : 160.0;
     pSnapshot->gpuCardPowerWatts = gpu.powerWatts;
     pSnapshot->gpuVoltageMv = gpu.voltageMv;
     pSnapshot->gpuTemperatureEdgeC = gpu.temperatureEdgeC;
@@ -922,7 +949,7 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(
     pSnapshot->gpuWaitMs = hasFrame ? (static_cast<double>(frame.gpuWaitNs) / 1'000'000.0) : 0.0;
 
     // Limiters
-    pSnapshot->gpuPowerLimited = (gpu.powerWatts >= pSnapshot->gpuSustainedPowerLimitWatts * 0.98) ? 1 : 0;
+    pSnapshot->gpuPowerLimited = (pSnapshot->gpuSustainedPowerLimitWatts > 0.0 && gpu.powerWatts >= pSnapshot->gpuSustainedPowerLimitWatts * 0.98) ? 1 : 0;
     pSnapshot->gpuTemperatureLimited = (gpu.temperatureEdgeC > 90.0 || gpu.temperatureHotspotC > 105.0) ? 1 : 0;
     pSnapshot->gpuCurrentLimited = 0;
     pSnapshot->gpuVoltageLimited = (gpu.voltageMv >= 1150.0) ? 1 : 0;
@@ -941,9 +968,11 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(
     pSnapshot->vramTemperatureLimited = (gpu.temperatureMemC > 95.0) ? 1 : 0;
 
     // PSO
-    pSnapshot->psoCompileCount = 0;
-    pSnapshot->psoCompileTimeMs = 0.0;
-    pSnapshot->psoCompileBusyPercent = 0.0;
+    pSnapshot->psoCompileCount = hasFrame ? frame.psoCompileCount : 0;
+    pSnapshot->psoCompileTimeMs = hasFrame ? (static_cast<double>(frame.psoCompileDurationNs) / 1'000'000.0) : 0.0;
+    pSnapshot->psoCompileBusyPercent = (curFtMs > 0.0 && pSnapshot->psoCompileTimeMs > 0.0)
+        ? std::min(100.0, (pSnapshot->psoCompileTimeMs / curFtMs) * 100.0)
+        : 0.0;
 
     return PM_STATUS_SUCCESS;
 }

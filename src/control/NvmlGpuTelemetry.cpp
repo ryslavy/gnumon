@@ -45,6 +45,10 @@ bool NvmlGpuTelemetry::Initialize() {
     nvmlDeviceGetClockInfo_ = reinterpret_cast<nvmlDeviceGetClockInfo_f>(dlsym(libNvml_, "nvmlDeviceGetClockInfo"));
     nvmlDeviceGetMemoryInfo_ = reinterpret_cast<nvmlDeviceGetMemoryInfo_f>(dlsym(libNvml_, "nvmlDeviceGetMemoryInfo"));
     nvmlDeviceGetFanSpeed_ = reinterpret_cast<nvmlDeviceGetFanSpeed_f>(dlsym(libNvml_, "nvmlDeviceGetFanSpeed"));
+    nvmlDeviceGetPowerManagementLimit_ = reinterpret_cast<nvmlDeviceGetPowerManagementLimit_f>(dlsym(libNvml_, "nvmlDeviceGetPowerManagementLimit"));
+    if (!nvmlDeviceGetPowerManagementLimit_) {
+        nvmlDeviceGetPowerManagementLimit_ = reinterpret_cast<nvmlDeviceGetPowerManagementLimit_f>(dlsym(libNvml_, "nvmlDeviceGetEnforcedPowerLimit"));
+    }
 
     if (!nvmlInit_ || nvmlInit_() != 0) {
         dlclose(libNvml_);
@@ -121,6 +125,13 @@ bool NvmlGpuTelemetry::Sample(GpuMetrics& metrics) {
         unsigned int speed = 0;
         if (nvmlDeviceGetFanSpeed_(deviceHandle_, &speed) == 0) {
             metrics.fanSpeedRpm = static_cast<double>(speed);
+        }
+    }
+
+    if (nvmlDeviceGetPowerManagementLimit_) {
+        unsigned int limitMilliWatts = 0;
+        if (nvmlDeviceGetPowerManagementLimit_(deviceHandle_, &limitMilliWatts) == 0) {
+            metrics.powerLimitWatts = static_cast<double>(limitMilliWatts) / 1000.0;
         }
     }
 
