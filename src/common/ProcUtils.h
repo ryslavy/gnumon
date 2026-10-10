@@ -10,6 +10,8 @@
 #include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <algorithm>
+#include "../ipc/FrameRingBuffer.h"
 
 namespace gnumon::common {
 
@@ -77,12 +79,19 @@ inline void CleanStaleRings() {
     }
 }
 
-// Scans /dev/shm for live running processes with an active gnumon ring buffer
+struct RingCandidate {
+    uint32_t pid{0};
+    uint64_t writeIndex{0};
+    uint64_t lastTimestampNs{0};
+};
+
+// Scans /dev/shm for live running processes with an active gnumon ring buffer,
+// sorting processes that are actively rendering frames to the very top.
 inline std::vector<uint32_t> GetActiveRingPids() {
     CleanStaleRings();
-    std::vector<uint32_t> activePids;
+    std::vector<RingCandidate> candidates;
     std::filesystem::path shmDir("/dev/shm");
-    if (!std::filesystem::exists(shmDir)) return activePids;
+    if (!std::filesystem::exists(shmDir)) return {};
 
     for (const auto& entry : std::filesystem::directory_iterator(shmDir)) {
         std::string name = entry.path().filename().string();
@@ -91,26 +100,101 @@ inline std::vector<uint32_t> GetActiveRingPids() {
             try {
                 uint32_t pid = std::stoul(pidStr);
                 if (pid > 0 && IsRingAlive(pid)) {
-                    activePids.push_back(pid);
+                    RingCandidate cand;
+                    cand.pid = pid;
+                    std::string shmPath = "/" + name;
+                    int fd = shm_open(shmPath.c_str(), O_RDONLY, 0666);
+                    if (fd >= 0) {
+                        void* ptr = mmap(nullptr, sizeof(ipc::SharedRingHeader), PROT_READ, MAP_SHARED, fd, 0);
+                        if (ptr != MAP_FAILED) {
+                            const auto* ring = static_cast<const ipc::SharedRingHeader*>(ptr);
+                            if (ring->magic == 0x474E554D) {
+                                cand.writeIndex = ring->writeIndex.load(std::memory_order_relaxed);
+                                if (cand.writeIndex > 0) {
+                                    uint64_t lastIdx = (cand.writeIndex - 1) & ipc::RING_BUFFER_MASK;
+                                    cand.lastTimestampNs = ring->events[lastIdx].presentStartTimestampNs;
+                                }
+                            }
+                            munmap(ptr, sizeof(ipc::SharedRingHeader));
+                        }
+                        close(fd);
+                    }
+                    candidates.push_back(cand);
                 }
             } catch (...) {}
         }
     }
-    return activePids;
+
+    std::sort(candidates.begin(), candidates.end(), [](const RingCandidate& a, const RingCandidate& b) {
+        if (a.lastTimestampNs > 0 && b.lastTimestampNs > 0) {
+            return a.lastTimestampNs > b.lastTimestampNs;
+        }
+        if (a.writeIndex > 0 && b.writeIndex == 0) return true;
+        if (b.writeIndex > 0 && a.writeIndex == 0) return false;
+        if (a.writeIndex != b.writeIndex) {
+            return a.writeIndex > b.writeIndex;
+        }
+        return a.pid > b.pid;
+    });
+
+    std::vector<uint32_t> result;
+    result.reserve(candidates.size());
+    for (const auto& c : candidates) {
+        result.push_back(c.pid);
+    }
+    return result;
 }
 
 inline std::string GetProcessName(uint32_t pid) {
     if (pid == 0) return "";
+
+    // 1. Try reading /proc/<pid>/cmdline to detect Windows/Wine executables (.exe)
+    std::string cmdPath = "/proc/" + std::to_string(pid) + "/cmdline";
+    std::ifstream cmdFile(cmdPath, std::ios::binary);
+    if (cmdFile.is_open()) {
+        std::string raw((std::istreambuf_iterator<char>(cmdFile)), std::istreambuf_iterator<char>());
+        if (!raw.empty()) {
+            size_t start = 0;
+            while (start < raw.size()) {
+                size_t end = raw.find('\0', start);
+                if (end == std::string::npos) end = raw.size();
+                std::string arg = raw.substr(start, end - start);
+                start = end + 1;
+                if (arg.empty()) continue;
+
+                std::string lower = arg;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                auto pos = lower.rfind(".exe");
+                if (pos != std::string::npos) {
+                    std::string exeName = arg.substr(0, pos + 4);
+                    auto lastSlash = exeName.find_last_of("/\\");
+                    if (lastSlash != std::string::npos) {
+                        exeName = exeName.substr(lastSlash + 1);
+                    }
+                    if (!exeName.empty() && exeName != "wine64-preloader" && exeName != "explorer.exe") {
+                        return exeName;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Read /proc/<pid>/comm
     std::string commPath = "/proc/" + std::to_string(pid) + "/comm";
     std::ifstream commFile(commPath);
     if (commFile.is_open()) {
         std::string comm;
         if (std::getline(commFile, comm) && !comm.empty()) {
-            return comm;
+            while (!comm.empty() && (comm.back() == '\r' || comm.back() == '\n' || comm.back() == ' ')) {
+                comm.pop_back();
+            }
+            if (!comm.empty() && comm != "MainThread" && comm.rfind("wine", 0) != 0) {
+                return comm;
+            }
         }
     }
 
-    // Fallback: check ring header for container process name
+    // 3. Check ring header for process name
     std::string ringPath = "/gnumon_ring_" + std::to_string(pid);
     int fd = shm_open(ringPath.c_str(), O_RDONLY, 0666);
     if (fd >= 0) {
@@ -127,13 +211,29 @@ inline std::string GetProcessName(uint32_t pid) {
         if (read(fd, &hdr, sizeof(hdr)) == sizeof(hdr) && hdr.magic == 0x474E554D) {
             if (hdr.processName[0] != '\0') {
                 close(fd);
-                return std::string(hdr.processName);
+                std::string pName(hdr.processName);
+                if (pName != "MainThread") {
+                    return pName;
+                }
             }
         }
         close(fd);
     }
 
-    return "";
+    // 4. Fallback: return comm if exists
+    if (commFile.is_open()) {
+        std::string comm;
+        commFile.clear();
+        commFile.seekg(0);
+        if (std::getline(commFile, comm) && !comm.empty()) {
+            while (!comm.empty() && (comm.back() == '\r' || comm.back() == '\n' || comm.back() == ' ')) {
+                comm.pop_back();
+            }
+            if (!comm.empty()) return comm;
+        }
+    }
+
+    return "Game";
 }
 
 struct ProcessInfo {

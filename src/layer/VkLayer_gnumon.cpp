@@ -226,6 +226,7 @@ static bool IsProcessBlacklisted() {
         "Xwayland",
         "plasmashell",
         "plasma-workspac",
+        "gnumon",
         "gnumon-gui",
         "gnumond",
         "gnumon-cli",
@@ -234,7 +235,25 @@ static bool IsProcessBlacklisted() {
         "discord",
         "slack",
         "obs",
-        "gamescope"
+        "gamescope",
+        "python",
+        "python3",
+        "python3.10",
+        "python3.11",
+        "python3.12",
+        "python3.13",
+        "antigravity",
+        "cursor",
+        "code",
+        "electron",
+        "chrome",
+        "chromium",
+        "firefox",
+        "explorer.exe",
+        "services.exe",
+        "winedevice.exe",
+        "svchost.exe",
+        "conhost.exe"
     };
 
     for (const char* name : blacklistedNames) {
@@ -1000,9 +1019,14 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                 }
 
                 gnumon::ipc::TelemetrySnapshot telemSnap{};
+                uint64_t nowNs = gnumon::common::Clock::GetTimestampNs();
                 bool hasTelem = g_producer.ReadTelemetry(telemSnap);
-                if (!hasTelem || telemSnap.valid == 0) {
+                bool hasDaemonTelem = hasTelem && (telemSnap.valid == 2) &&
+                                     (telemSnap.timestampNs > 0 && (nowNs - telemSnap.timestampNs) < 1'000'000'000ULL);
+                if (!hasDaemonTelem) {
                     g_directSysfsTelem.Sample(telemSnap);
+                    telemSnap.valid = 1;
+                    telemSnap.timestampNs = nowNs;
                     hasTelem = true;
                     g_producer.WriteTelemetry(telemSnap);
                 }

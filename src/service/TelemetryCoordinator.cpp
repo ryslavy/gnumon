@@ -322,7 +322,8 @@ void TelemetryCoordinator::SampleAll() {
             if (!cpu.cpuName.empty()) {
                 std::strncpy(snap.cpuName, cpu.cpuName.c_str(), sizeof(snap.cpuName) - 1);
             }
-            snap.valid = 1;
+            snap.timestampNs = common::Clock::GetTimestampNs();
+            snap.valid = 2; // 2 = Coordinator / Daemon full telemetry
             frameConsumer_.WriteTelemetry(snap);
         }
     }

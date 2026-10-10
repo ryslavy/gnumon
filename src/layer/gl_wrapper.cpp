@@ -115,8 +115,95 @@ static bool g_enableOverlay = GetConfiguredHudDefault();
 static bool g_lastProducerOverlay = GetConfiguredHudDefault();
 static int g_hudCorner = GetConfiguredHudCorner();
 
+static bool IsProcessBlacklisted() {
+    static int cachedResult = -1;
+    if (cachedResult != -1) return (cachedResult == 1);
+
+    char commBuf[64]{};
+    int cfd = open("/proc/self/comm", O_RDONLY | O_CLOEXEC);
+    if (cfd >= 0) {
+        ssize_t n = read(cfd, commBuf, sizeof(commBuf) - 1);
+        close(cfd);
+        if (n > 0) {
+            while (n > 0 && (commBuf[n - 1] == '\r' || commBuf[n - 1] == '\n' || commBuf[n - 1] == ' ')) {
+                commBuf[--n] = '\0';
+            }
+        }
+    }
+
+    static const char* blacklistedNames[] = {
+        "gnome-shell",
+        "kwin_wayland",
+        "kwin_x11",
+        "kwin",
+        "hyprland",
+        "Hyprland",
+        "sway",
+        "wayfire",
+        "weston",
+        "Xwayland",
+        "plasmashell",
+        "plasma-workspac",
+        "gnumon",
+        "gnumon-gui",
+        "gnumond",
+        "gnumon-cli",
+        "steam",
+        "steamwebhelper",
+        "discord",
+        "slack",
+        "obs",
+        "gamescope",
+        "python",
+        "python3",
+        "python3.10",
+        "python3.11",
+        "python3.12",
+        "python3.13",
+        "antigravity",
+        "cursor",
+        "code",
+        "electron",
+        "chrome",
+        "chromium",
+        "firefox",
+        "explorer.exe",
+        "services.exe",
+        "winedevice.exe",
+        "svchost.exe",
+        "conhost.exe"
+    };
+
+    for (const char* name : blacklistedNames) {
+        if (strcmp(commBuf, name) == 0) {
+            cachedResult = 1;
+            return true;
+        }
+    }
+
+    char cmdBuf[1024]{};
+    int cmdfd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+    if (cmdfd >= 0) {
+        ssize_t n = read(cmdfd, cmdBuf, sizeof(cmdBuf) - 1);
+        close(cmdfd);
+        if (n > 0) {
+            cmdBuf[n] = '\0';
+            for (const char* name : blacklistedNames) {
+                if (strstr(cmdBuf, name) != nullptr) {
+                    cachedResult = 1;
+                    return true;
+                }
+            }
+        }
+    }
+
+    cachedResult = 0;
+    return false;
+}
+
 void EnsureInit() {
     if (!g_glInit.exchange(true)) {
+        if (IsProcessBlacklisted()) return;
         g_glProducer.Open(getpid());
         if (g_enableOverlay) {
             g_glProducer.SetOverlayEnabled(true);
@@ -213,9 +300,13 @@ void PreSwapHook(uint64_t nowNs) {
 
     gnumon::ipc::TelemetrySnapshot telemSnap{};
     bool hasTelem = g_glProducer.ReadTelemetry(telemSnap);
-    if (!hasTelem || telemSnap.valid == 0) {
+    bool hasDaemonTelem = hasTelem && (telemSnap.valid == 2) &&
+                         (telemSnap.timestampNs > 0 && (nowNs - telemSnap.timestampNs) < 1'000'000'000ULL);
+    if (!hasDaemonTelem) {
         static gnumon::layer::DirectSysfsTelemetry s_glSysfs;
         s_glSysfs.Sample(telemSnap);
+        telemSnap.valid = 1;
+        telemSnap.timestampNs = nowNs;
         hasTelem = true;
         g_glProducer.WriteTelemetry(telemSnap);
     }

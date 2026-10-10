@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <cstring>
 #include <fstream>
+#include <algorithm>
+#include <vector>
 
 namespace gnumon::ipc {
 
@@ -58,7 +60,8 @@ struct alignas(64) TelemetrySnapshot {
     char gpuName[64]{};
     char cpuName[64]{};
     uint32_t valid = 0;
-    char pad[12]{};
+    uint64_t timestampNs = 0;
+    uint32_t reserved = 0;
 };
 
 struct alignas(64) SharedRingHeader {
@@ -116,12 +119,50 @@ public:
         ring_->writeIndex.store(0, std::memory_order_relaxed);
         ring_->readIndex.store(0, std::memory_order_relaxed);
 
-        // Detect own process comm name
-        std::ifstream commFile("/proc/self/comm");
-        if (commFile.is_open()) {
-            std::string comm;
-            if (std::getline(commFile, comm) && !comm.empty()) {
-                std::strncpy(ring_->processName, comm.c_str(), sizeof(ring_->processName) - 1);
+        // Detect own process name: check /proc/self/cmdline for .exe (Proton/Wine) first
+        bool nameFound = false;
+        std::ifstream cmdFile("/proc/self/cmdline", std::ios::binary);
+        if (cmdFile.is_open()) {
+            std::string raw((std::istreambuf_iterator<char>(cmdFile)), std::istreambuf_iterator<char>());
+            if (!raw.empty()) {
+                size_t start = 0;
+                while (start < raw.size()) {
+                    size_t end = raw.find('\0', start);
+                    if (end == std::string::npos) end = raw.size();
+                    std::string arg = raw.substr(start, end - start);
+                    start = end + 1;
+                    if (arg.empty()) continue;
+
+                    std::string lower = arg;
+                    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                    auto pos = lower.rfind(".exe");
+                    if (pos != std::string::npos) {
+                        std::string exeName = arg.substr(0, pos + 4);
+                        auto lastSlash = exeName.find_last_of("/\\");
+                        if (lastSlash != std::string::npos) {
+                            exeName = exeName.substr(lastSlash + 1);
+                        }
+                        if (!exeName.empty() && exeName != "wine64-preloader" && exeName != "explorer.exe") {
+                            std::strncpy(ring_->processName, exeName.c_str(), sizeof(ring_->processName) - 1);
+                            nameFound = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (!nameFound) {
+            std::ifstream commFile("/proc/self/comm");
+            if (commFile.is_open()) {
+                std::string comm;
+                if (std::getline(commFile, comm) && !comm.empty()) {
+                    while (!comm.empty() && (comm.back() == '\r' || comm.back() == '\n' || comm.back() == ' ')) {
+                        comm.pop_back();
+                    }
+                    if (!comm.empty()) {
+                        std::strncpy(ring_->processName, comm.c_str(), sizeof(ring_->processName) - 1);
+                    }
+                }
             }
         }
 
@@ -300,6 +341,12 @@ public:
     void WriteTelemetry(const TelemetrySnapshot& snap) {
         if (!ring_) return;
         ring_->telemetry = snap;
+    }
+
+    bool ReadTelemetry(TelemetrySnapshot& out) const {
+        if (!ring_) return false;
+        out = ring_->telemetry;
+        return (out.valid > 0);
     }
 
 private:

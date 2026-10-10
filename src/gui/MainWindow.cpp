@@ -338,6 +338,10 @@ void MainWindow::AutoTargetProcess() {
             }
             UpdateStatusBar();
         }
+    } else if (trackedPid_ > 0 && !common::IsRingAlive(trackedPid_)) {
+        trackedPid_ = 0;
+        trackedProcessName_ = "";
+        UpdateStatusBar();
     }
 }
 
@@ -471,17 +475,9 @@ void MainWindow::OnToggleRecording() {
 }
 
 void MainWindow::OnPollTimer() {
-    // If tracked PID is invalid or ring disconnected, dynamically auto-acquire active ring
-    bool trackedHasRing = (trackedPid_ > 0 && common::IsRingAlive(trackedPid_));
-    if (!trackedHasRing && (config_.autoTarget || trackedPid_ == 0)) {
-        auto activePids = common::GetActiveRingPids();
-        if (!activePids.empty()) {
-            trackedPid_ = activePids.front();
-            trackedProcessName_ = QString::fromStdString(common::ProcUtils::GetProcessName(trackedPid_));
-            if (session_) {
-                pmStartTrackingProcess(session_, trackedPid_);
-            }
-        }
+    // If autoTarget is enabled, or if current tracked PID is dead/invalid, dynamically auto-acquire active ring
+    if (config_.autoTarget || trackedPid_ == 0 || !common::IsRingAlive(trackedPid_)) {
+        AutoTargetProcess();
     }
 
     // Process frame recording if active

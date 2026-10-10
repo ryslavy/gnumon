@@ -454,7 +454,7 @@ static QString GetMetricUnits(int metricId) {
         case PM_METRIC_CPU_TEMPERATURE:
         case PM_METRIC_GPU_VOLTAGE_REGULATOR_TEMPERATURE:
         case PM_METRIC_CPU_CORE_TEMPERATURE:
-            return "°C";
+            return "C";
         case PM_METRIC_GPU_FAN_SPEED:
             return "RPM";
         case PM_METRIC_GPU_MEM_SIZE:
@@ -624,15 +624,27 @@ void WindowedOverlayWidget::paintEvent(QPaintEvent *) {
             float minVal = widget.rangeMin;
             float maxVal = widget.rangeMax;
             if (widget.autoScale) {
+                float calcMin = 1e9f;
+                float calcMax = -1e9f;
                 for (const auto& line : widget.metrics) {
                     if (IsStringMetric(line.metricId)) continue;
                     const auto& hist = GetHistoryForMetric(line.metricId);
                     for (float v : hist) {
-                        if (v < minVal) minVal = v;
-                        if (v > maxVal) maxVal = v;
+                        if (v < calcMin) calcMin = v;
+                        if (v > calcMax) calcMax = v;
                     }
                 }
-                if (maxVal <= minVal) maxVal = minVal + 1.0f;
+                if (calcMax > calcMin) {
+                    float pad = (calcMax - calcMin) * 0.15f;
+                    minVal = std::max(0.0f, calcMin - pad);
+                    maxVal = calcMax + pad;
+                } else if (calcMax >= 0.0f && calcMax < 1e8f) {
+                    minVal = 0.0f;
+                    maxVal = std::max(1.0f, calcMax * 1.2f);
+                }
+            }
+            if (std::abs(maxVal - minVal) < 0.001f) {
+                maxVal = minVal + 1.0f;
             }
             float range = maxVal - minVal;
             if (range <= 0.001f) range = 1.0f;
