@@ -87,6 +87,9 @@ struct HudHistory {
     std::deque<double> fps;
     uint64_t lastDisplayNs = 0;
     uint64_t lastCpuStartNs = 0;
+    double lastGpuDurationMs = 0.0;
+    double lastGpuBusyMs = 0.0;
+    double lastGpuWaitMs = 0.0;
 };
 HudHistory g_hudHistory;
 std::mutex g_hudMutex;
@@ -906,6 +909,14 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                                              disp.getProcAddr,
                                              g_getPhysicalDeviceMemoryProperties);
                 g_overlayRenderer.SetPreset(GetConfiguredHudPreset());
+                if (disp.getInstProcAddr && disp.physicalDevice != VK_NULL_HANDLE) {
+                    auto getProps = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(disp.getInstProcAddr(VK_NULL_HANDLE, "vkGetPhysicalDeviceProperties"));
+                    if (getProps) {
+                        VkPhysicalDeviceProperties props{};
+                        getProps(disp.physicalDevice, &props);
+                        g_overlayRenderer.SetGpuName(props.deviceName);
+                    }
+                }
             }
 
             if (g_overlayRenderer.IsInitialized()) {
@@ -933,6 +944,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                 double dispFps = 0.0;
                 double animErrMs = 0.0;
                 double latMs = 0.0;
+                double gpuTimeMs = 0.0;
+                double gpuBusyMs = 0.0;
+                double gpuWaitMs = 0.0;
 
                 {
                     std::lock_guard<std::mutex> hlock(g_hudMutex);
@@ -956,6 +970,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                     latMs = (g_currentCpuStartNs > 0 && presentStartNs > g_currentCpuStartNs)
                         ? (static_cast<double>(presentStartNs - g_currentCpuStartNs) / 1'000'000.0)
                         : ftMs;
+                    gpuTimeMs = g_hudHistory.lastGpuDurationMs;
+                    gpuBusyMs = g_hudHistory.lastGpuBusyMs;
+                    gpuWaitMs = g_hudHistory.lastGpuWaitMs;
                 }
 
                 gnumon::ipc::TelemetrySnapshot telemSnap{};
@@ -971,7 +988,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                                                     pPresentInfo->pWaitSemaphores,
                                                     &overlaySignalSem,
                                                     hasTelem ? &telemSnap : nullptr,
-                                                    g_enableOverlay)) {
+                                                    g_enableOverlay,
+                                                    gpuTimeMs, gpuBusyMs, gpuWaitMs)) {
                         overlayRendered = true;
                     }
                 }
@@ -1022,18 +1040,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
     uint64_t frameTimeNs = (lastStart > 0 && presentStartNs > lastStart) ? (presentStartNs - lastStart) : 0;
     double currentFps = (frameTimeNs > 0) ? (1'000'000'000.0 / static_cast<double>(frameTimeNs)) : 0.0;
 
-    {
-        std::lock_guard<std::mutex> hlock(g_hudMutex);
-        if (currentFps > 0.0) {
-            g_hudHistory.fps.push_back(currentFps);
-            if (g_hudHistory.fps.size() > 120) {
-                g_hudHistory.fps.pop_front();
-            }
-        }
-        g_hudHistory.lastDisplayNs = presentEndNs;
-        g_hudHistory.lastCpuStartNs = g_currentCpuStartNs;
-    }
-
     uint64_t gpuStart = g_currentGpuSubmitStartNs.exchange(0, std::memory_order_acq_rel);
     if (gpuStart == 0) {
         gpuStart = (g_currentCpuStartNs > 0) ? g_currentCpuStartNs : lastStart;
@@ -1044,6 +1050,21 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
         ? (lastSubmitEnd - gpuStart)
         : gpuDuration;
     uint64_t gpuWait = (gpuDuration > gpuBusy) ? (gpuDuration - gpuBusy) : 0;
+
+    {
+        std::lock_guard<std::mutex> hlock(g_hudMutex);
+        if (currentFps > 0.0) {
+            g_hudHistory.fps.push_back(currentFps);
+            if (g_hudHistory.fps.size() > 120) {
+                g_hudHistory.fps.pop_front();
+            }
+        }
+        g_hudHistory.lastDisplayNs = presentEndNs;
+        g_hudHistory.lastCpuStartNs = g_currentCpuStartNs;
+        g_hudHistory.lastGpuDurationMs = static_cast<double>(gpuDuration) / 1'000'000.0;
+        g_hudHistory.lastGpuBusyMs = static_cast<double>(gpuBusy) / 1'000'000.0;
+        g_hudHistory.lastGpuWaitMs = static_cast<double>(gpuWait) / 1'000'000.0;
+    }
 
     gnumon::ipc::FrameEvent event{};
     event.processId = static_cast<uint32_t>(getpid());

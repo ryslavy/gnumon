@@ -91,6 +91,14 @@ public:
 
         LoadProcs();
 
+        SetIsVulkan(false);
+        if (p_glGetString) {
+            const char* ren = reinterpret_cast<const char*>(p_glGetString(0x1F01 /* GL_RENDERER */));
+            if (ren && ren[0] != '\0') {
+                SetGpuName(ren);
+            }
+        }
+
         // Prepare RGBA font texture from bitmap
         std::vector<uint8_t> rgba(FONT_TEX_W * FONT_TEX_H * 4);
         for (size_t i = 0; i < FONT_TEX_W * FONT_TEX_H; ++i) {
@@ -229,7 +237,8 @@ public:
                 double frameTimeMs, double latencyMs, double animErrorMs,
                 bool isRecording,
                 const ipc::TelemetrySnapshot* telem = nullptr,
-                bool hudVisible = true)
+                bool hudVisible = true,
+                double gpuTimeMs = 0.0, double gpuBusyMs = 0.0, double gpuWaitMs = 0.0)
     {
         if (screenW <= 0 || screenH <= 0) return;
         if (!Initialize()) return;
@@ -237,7 +246,8 @@ public:
         std::vector<OverlayVertex> verts;
         GenerateHudVertices(verts, static_cast<uint32_t>(screenW), static_cast<uint32_t>(screenH),
                             corner, presentFps, displayedFps, fps1PercentLow,
-                            frameTimeMs, latencyMs, animErrorMs, isRecording, telem, hudVisible);
+                            frameTimeMs, latencyMs, animErrorMs, isRecording, telem, hudVisible,
+                            gpuTimeMs, gpuBusyMs, gpuWaitMs);
 
         if (verts.empty()) return;
 
@@ -423,8 +433,10 @@ private:
         p_glGenVertexArrays = reinterpret_cast<PFN_glGenVertexArrays>(dlsym(RTLD_DEFAULT, "glGenVertexArrays"));
         p_glBindVertexArray = reinterpret_cast<PFN_glBindVertexArray>(dlsym(RTLD_DEFAULT, "glBindVertexArray"));
         p_glDeleteVertexArrays = reinterpret_cast<PFN_glDeleteVertexArrays>(dlsym(RTLD_DEFAULT, "glDeleteVertexArrays"));
+        p_glGetString = reinterpret_cast<PFN_glGetString>(dlsym(RTLD_DEFAULT, "glGetString"));
     }
 
+    typedef const GLubyte* (*PFN_glGetString)(GLenum name);
     typedef void (*PFN_glGetIntegerv)(GLenum pname, GLint *data);
     typedef void (*PFN_glGetBooleanv)(GLenum pname, GLboolean *data);
     typedef void (*PFN_glViewport)(GLint x, GLint y, GLsizei width, GLsizei height);
@@ -474,6 +486,7 @@ private:
     typedef void (*PFN_glBindVertexArray)(GLuint array);
     typedef void (*PFN_glDeleteVertexArrays)(GLsizei n, const GLuint *arrays);
 
+    PFN_glGetString p_glGetString = nullptr;
     PFN_glGetIntegerv p_glGetIntegerv = nullptr;
     PFN_glGetBooleanv p_glGetBooleanv = nullptr;
     PFN_glViewport p_glViewport = nullptr;

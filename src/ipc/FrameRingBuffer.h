@@ -51,7 +51,12 @@ struct alignas(64) TelemetrySnapshot {
     float cpuTemp = 0.0f;
     float cpuPower = 0.0f;
     float cpuFreq = 0.0f;
+    float gpuVoltage = 0.0f;
+    float gpuFanSpeed = 0.0f;
+    char gpuName[64]{};
+    char cpuName[64]{};
     uint32_t valid = 0;
+    char pad[12]{};
 };
 
 struct alignas(64) SharedRingHeader {

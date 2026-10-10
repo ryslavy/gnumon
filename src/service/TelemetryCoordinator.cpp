@@ -314,6 +314,14 @@ void TelemetryCoordinator::SampleAll() {
             snap.cpuTemp = static_cast<float>(cpu.cpuTemperatureC);
             snap.cpuPower = static_cast<float>(cpu.cpuPackagePowerWatts);
             snap.cpuFreq = static_cast<float>(cpu.cpuFrequencyMhz);
+            snap.gpuVoltage = static_cast<float>(gpu.voltageMv);
+            snap.gpuFanSpeed = static_cast<float>(gpu.fanSpeedRpm);
+            if (!gpu.deviceName.empty()) {
+                std::strncpy(snap.gpuName, gpu.deviceName.c_str(), sizeof(snap.gpuName) - 1);
+            }
+            if (!cpu.cpuName.empty()) {
+                std::strncpy(snap.cpuName, cpu.cpuName.c_str(), sizeof(snap.cpuName) - 1);
+            }
             snap.valid = 1;
             frameConsumer_.WriteTelemetry(snap);
         }

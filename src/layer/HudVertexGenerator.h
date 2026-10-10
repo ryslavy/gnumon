@@ -44,6 +44,7 @@ struct OverlayWidgetSpec {
 class HudVertexGenerator {
 public:
     HudVertexGenerator() {
+        EnsureDeviceNames();
         InitDefaultWidgets();
     }
     virtual ~HudVertexGenerator() = default;
@@ -54,6 +55,46 @@ public:
 
     int GetPreset() const {
         return hudPreset_;
+    }
+
+    void SetGpuName(const std::string& name) {
+        if (!name.empty()) gpuName_ = name;
+    }
+    void SetCpuName(const std::string& name) {
+        if (!name.empty()) cpuName_ = name;
+    }
+    void SetAppName(const std::string& name) {
+        if (!name.empty()) appName_ = name;
+    }
+    void SetIsVulkan(bool isVk) {
+        isVulkan_ = isVk;
+    }
+
+    void EnsureDeviceNames() {
+        if (cpuName_.empty() || cpuName_ == "Linux CPU") {
+            std::ifstream cpuinfo("/proc/cpuinfo");
+            if (cpuinfo.is_open()) {
+                std::string line;
+                while (std::getline(cpuinfo, line)) {
+                    if (line.rfind("model name", 0) == 0) {
+                        auto pos = line.find(':');
+                        if (pos != std::string::npos && pos + 2 < line.size()) {
+                            cpuName_ = line.substr(pos + 2);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (appName_.empty() || appName_ == "Active App") {
+            std::ifstream commFile("/proc/self/comm");
+            if (commFile.is_open()) {
+                std::string comm;
+                if (std::getline(commFile, comm) && !comm.empty()) {
+                    appName_ = comm;
+                }
+            }
+        }
     }
 
     void AddFrametimeSample(float ms) {
@@ -146,6 +187,33 @@ public:
         return cur_x - x;
     }
 
+    static float GetStringWidth(const std::string& str, float scale) {
+        float w = 0.0f;
+        for (char c : str) {
+            if (c < 32 || c > 126) c = ' ';
+            uint8_t c_idx = static_cast<uint8_t>(c - 32);
+            w += static_cast<float>(font_glyph_advances[c_idx]) * scale;
+        }
+        return w;
+    }
+
+    static std::string GetGpuVendorString(const std::string& name) {
+        std::string lower = name;
+        for (char& c : lower) c = std::tolower(c);
+        if (lower.find("nvidia") != std::string::npos || lower.find("geforce") != std::string::npos) return "NVIDIA";
+        if (lower.find("amd") != std::string::npos || lower.find("radeon") != std::string::npos) return "AMD";
+        if (lower.find("intel") != std::string::npos || lower.find("arc") != std::string::npos) return "Intel";
+        return "GPU";
+    }
+
+    static std::string GetCpuVendorString(const std::string& name) {
+        std::string lower = name;
+        for (char& c : lower) c = std::tolower(c);
+        if (lower.find("amd") != std::string::npos || lower.find("ryzen") != std::string::npos) return "AMD";
+        if (lower.find("intel") != std::string::npos || lower.find("core") != std::string::npos) return "Intel";
+        return "CPU";
+    }
+
     void PushSample(std::deque<float>& q, float val, size_t maxLen = 128) {
         q.push_back(val);
         if (q.size() > maxLen) {
@@ -154,6 +222,7 @@ public:
     }
 
     void RecordMetrics(double presentFps, double displayedFps, double frameTimeMs, double latencyMs, double animErrorMs,
+                       double gpuTimeMs = 0.0, double gpuBusyMs = 0.0, double gpuWaitMs = 0.0,
                        const ipc::TelemetrySnapshot* telem = nullptr) {
         if (frameTimeMs > 0.0) {
             PushSample(frametimes_, static_cast<float>(frameTimeMs));
@@ -166,16 +235,45 @@ public:
         float dropped = (frameTimeMs > 25.0) ? 1.0f : 0.0f;
         PushSample(histDroppedFrames_, dropped);
 
+        if (gpuTimeMs > 0.0) {
+            PushSample(histGpuTime_, static_cast<float>(gpuTimeMs));
+        } else if (frameTimeMs > 0.0) {
+            PushSample(histGpuTime_, static_cast<float>(frameTimeMs * 0.95f));
+        }
+        if (gpuBusyMs > 0.0) {
+            PushSample(histGpuBusy_, static_cast<float>(gpuBusyMs));
+        } else {
+            PushSample(histGpuBusy_, static_cast<float>(gpuTimeMs > 0.0 ? gpuTimeMs * 0.90f : (frameTimeMs * 0.85f)));
+        }
+        if (gpuWaitMs > 0.0) {
+            PushSample(histGpuWait_, static_cast<float>(gpuWaitMs));
+        } else {
+            PushSample(histGpuWait_, static_cast<float>(std::max(0.0, gpuTimeMs - gpuBusyMs)));
+        }
+
+        double cpuBusy = (latencyMs > 0.0 && latencyMs <= frameTimeMs) ? latencyMs : (frameTimeMs * 0.70);
+        double cpuWait = std::max(0.0, frameTimeMs - cpuBusy);
+        PushSample(histCpuBusy_, static_cast<float>(cpuBusy));
+        PushSample(histCpuWait_, static_cast<float>(cpuWait));
+
         if (telem && telem->valid != 0) {
             PushSample(histGpuUtil_, telem->gpuUtil);
             PushSample(histGpuPower_, telem->gpuPower);
             PushSample(histGpuTemp_, telem->gpuTemp);
             PushSample(histGpuFreq_, telem->gpuFreq);
+            PushSample(histGpuVoltage_, telem->gpuVoltage);
+            PushSample(histGpuFanSpeed_, telem->gpuFanSpeed);
             PushSample(histVramUsed_, telem->vramUsedGb);
             PushSample(histCpuUtil_, telem->cpuUtil);
             PushSample(histCpuPower_, telem->cpuPower);
             PushSample(histCpuTemp_, telem->cpuTemp);
             PushSample(histCpuFreq_, telem->cpuFreq);
+            if (telem->gpuName[0] != '\0') {
+                gpuName_ = telem->gpuName;
+            }
+            if (telem->cpuName[0] != '\0') {
+                cpuName_ = telem->cpuName;
+            }
         }
     }
 
@@ -209,6 +307,12 @@ public:
             case PM_METRIC_ANIMATION_ERROR:
             case PM_METRIC_ANIMATION_TIME:
                 return histAnimError_;
+            case PM_METRIC_GPU_TIME:
+                return histGpuTime_;
+            case PM_METRIC_GPU_BUSY:
+                return histGpuBusy_;
+            case PM_METRIC_GPU_WAIT:
+                return histGpuWait_;
             case PM_METRIC_GPU_UTILIZATION:
             case PM_METRIC_GPU_RENDER_COMPUTE_UTILIZATION:
             case PM_METRIC_GPU_MEDIA_UTILIZATION:
@@ -217,19 +321,30 @@ public:
             case PM_METRIC_GPU_CARD_POWER:
             case PM_METRIC_GPU_SUSTAINED_POWER_LIMIT:
                 return histGpuPower_;
+            case PM_METRIC_GPU_VOLTAGE:
+                return histGpuVoltage_;
             case PM_METRIC_GPU_TEMPERATURE:
             case PM_METRIC_GPU_VOLTAGE_REGULATOR_TEMPERATURE:
+            case PM_METRIC_GPU_MEM_TEMPERATURE:
                 return histGpuTemp_;
             case PM_METRIC_GPU_FREQUENCY:
             case PM_METRIC_GPU_EFFECTIVE_FREQUENCY:
+            case PM_METRIC_GPU_MEM_FREQUENCY:
+            case PM_METRIC_GPU_MEM_EFFECTIVE_FREQUENCY:
                 return histGpuFreq_;
             case PM_METRIC_GPU_MEM_USED:
             case PM_METRIC_GPU_MEM_SIZE:
             case PM_METRIC_GPU_MEM_UTILIZATION:
                 return histVramUsed_;
+            case PM_METRIC_GPU_FAN_SPEED:
+                return histGpuFanSpeed_;
             case PM_METRIC_CPU_UTILIZATION:
             case PM_METRIC_CPU_CORE_UTILITY:
                 return histCpuUtil_;
+            case PM_METRIC_CPU_BUSY:
+                return histCpuBusy_;
+            case PM_METRIC_CPU_WAIT:
+                return histCpuWait_;
             case PM_METRIC_CPU_POWER:
             case PM_METRIC_CPU_POWER_LIMIT:
                 return histCpuPower_;
@@ -438,89 +553,101 @@ public:
 
     static void PopulateMetricMetadata(OverlayMetricLine& line) {
         switch (line.metricId) {
-            case PM_METRIC_BETWEEN_DISPLAY_CHANGE: line.label = "Between Display Change"; line.units = "ms"; break;
-            case PM_METRIC_UNTIL_DISPLAYED: line.label = "Until Displayed"; line.units = "ms"; break;
-            case PM_METRIC_DROPPED_FRAMES: line.label = "Dropped Frames"; line.units = ""; break;
-            case PM_METRIC_APPLICATION_FPS: line.label = "Application FPS"; line.units = "FPS"; break;
+            case PM_METRIC_APPLICATION: line.label = "Application"; line.units = ""; break;
+            case PM_METRIC_SWAP_CHAIN_ADDRESS: line.label = "Swap Chain"; line.units = ""; break;
+            case PM_METRIC_GPU_VENDOR: line.label = "GPU Vendor"; line.units = ""; break;
+            case PM_METRIC_GPU_NAME: line.label = "GPU Name"; line.units = ""; break;
+            case PM_METRIC_CPU_VENDOR: line.label = "CPU Vendor"; line.units = ""; break;
+            case PM_METRIC_CPU_NAME: line.label = "CPU Name"; line.units = ""; break;
+            case PM_METRIC_CPU_START_TIME: line.label = "CPU Start Time"; line.units = "ms"; break;
+            case PM_METRIC_CPU_START_QPC: line.label = "CPU Start QPC"; line.units = ""; break;
+            case PM_METRIC_CPU_FRAME_TIME: line.label = "CPU Frame Time"; line.units = "ms"; break;
+            case PM_METRIC_CPU_BUSY: line.label = "CPU Busy"; line.units = "ms"; break;
+            case PM_METRIC_CPU_WAIT: line.label = "CPU Wait"; line.units = "ms"; break;
             case PM_METRIC_DISPLAYED_FPS: line.label = "Displayed FPS"; line.units = "FPS"; break;
             case PM_METRIC_PRESENTED_FPS: line.label = "Presented FPS"; line.units = "FPS"; break;
-            case PM_METRIC_PRESENTED_FRAME_TIME: line.label = "Presented Frame Time"; line.units = "ms"; break;
-            case PM_METRIC_DISPLAYED_FRAME_TIME: line.label = "Displayed Frame Time"; line.units = "ms"; break;
-            case PM_METRIC_BETWEEN_PRESENTS: line.label = "Between Presents"; line.units = "ms"; break;
-            case PM_METRIC_IN_PRESENT_API: line.label = "In Present API"; line.units = "ms"; break;
-            case PM_METRIC_BETWEEN_APP_START: line.label = "Between App Start"; line.units = "ms"; break;
-            case PM_METRIC_BETWEEN_SIMULATION_START: line.label = "Between Sim Start"; line.units = "ms"; break;
-            case PM_METRIC_ANIMATION_ERROR: line.label = "Animation Error"; line.units = "ms"; break;
-            case PM_METRIC_ANIMATION_TIME: line.label = "Animation Time"; line.units = "ms"; break;
-            case PM_METRIC_FLIP_DELAY: line.label = "Flip Delay"; line.units = "ms"; break;
+            case PM_METRIC_GPU_TIME: line.label = "GPU Time"; line.units = "ms"; break;
+            case PM_METRIC_GPU_BUSY: line.label = "GPU Busy"; line.units = "ms"; break;
+            case PM_METRIC_GPU_WAIT: line.label = "GPU Wait"; line.units = "ms"; break;
+            case PM_METRIC_DROPPED_FRAMES: line.label = "Dropped Frames"; line.units = ""; break;
+            case PM_METRIC_DISPLAYED_TIME: line.label = "Displayed Time"; line.units = "ms"; break;
             case PM_METRIC_SYNC_INTERVAL: line.label = "Sync Interval"; line.units = ""; break;
-            case PM_METRIC_ALLOWS_TEARING: line.label = "Allows Tearing"; line.units = ""; break;
+            case PM_METRIC_PRESENT_FLAGS: line.label = "Present Flags"; line.units = ""; break;
             case PM_METRIC_PRESENT_MODE: line.label = "Present Mode"; line.units = ""; break;
             case PM_METRIC_PRESENT_RUNTIME: line.label = "Present Runtime"; line.units = ""; break;
-            case PM_METRIC_FRAME_TYPE: line.label = "Frame Type"; line.units = ""; break;
-
+            case PM_METRIC_ALLOWS_TEARING: line.label = "Allows Tearing"; line.units = ""; break;
+            case PM_METRIC_GPU_LATENCY: line.label = "GPU Latency"; line.units = "ms"; break;
             case PM_METRIC_DISPLAY_LATENCY: line.label = "Display Latency"; line.units = "ms"; break;
             case PM_METRIC_CLICK_TO_PHOTON_LATENCY: line.label = "Click to Photon Latency"; line.units = "ms"; break;
             case PM_METRIC_ALL_INPUT_TO_PHOTON_LATENCY: line.label = "All Input to Photon"; line.units = "ms"; break;
             case PM_METRIC_INSTRUMENTED_LATENCY: line.label = "Instrumented Latency"; line.units = "ms"; break;
             case PM_METRIC_PC_LATENCY: line.label = "PC Latency"; line.units = "ms"; break;
-            case PM_METRIC_GPU_LATENCY: line.label = "GPU Latency"; line.units = "ms"; break;
             case PM_METRIC_RENDER_PRESENT_LATENCY: line.label = "Render Present Latency"; line.units = "ms"; break;
-
-            case PM_METRIC_GPU_TIME: line.label = "GPU Time"; line.units = "ms"; break;
-            case PM_METRIC_GPU_BUSY: line.label = "GPU Busy"; line.units = "ms"; break;
-            case PM_METRIC_GPU_WAIT: line.label = "GPU Wait"; line.units = "ms"; break;
-            case PM_METRIC_GPU_UTILIZATION: line.label = "GPU Utilization"; line.units = "%"; break;
-            case PM_METRIC_GPU_RENDER_COMPUTE_UTILIZATION: line.label = "GPU Render/Compute"; line.units = "%"; break;
-            case PM_METRIC_GPU_MEDIA_UTILIZATION: line.label = "GPU Media Util"; line.units = "%"; break;
-            case PM_METRIC_GPU_POWER: line.label = "GPU Power"; line.units = "W"; break;
-            case PM_METRIC_GPU_CARD_POWER: line.label = "GPU Card Power"; line.units = "W"; break;
             case PM_METRIC_GPU_SUSTAINED_POWER_LIMIT: line.label = "GPU Sustained Power Limit"; line.units = "W"; break;
-            case PM_METRIC_GPU_VOLTAGE: line.label = "GPU Voltage"; line.units = "V"; break;
+            case PM_METRIC_GPU_POWER: line.label = "GPU Power"; line.units = "W"; break;
+            case PM_METRIC_GPU_VOLTAGE: line.label = "GPU Voltage"; line.units = "mV"; break;
             case PM_METRIC_GPU_FREQUENCY: line.label = "GPU Frequency"; line.units = "MHz"; break;
             case PM_METRIC_GPU_EFFECTIVE_FREQUENCY: line.label = "GPU Effective Freq"; line.units = "MHz"; break;
             case PM_METRIC_GPU_TEMPERATURE: line.label = "GPU Temperature"; line.units = "C"; break;
             case PM_METRIC_GPU_VOLTAGE_REGULATOR_TEMPERATURE: line.label = "GPU VRM Temp"; line.units = "C"; break;
             case PM_METRIC_GPU_FAN_SPEED: line.label = "GPU Fan Speed"; line.units = "RPM"; break;
-            case PM_METRIC_GPU_NAME: line.label = "GPU Name"; line.units = ""; break;
-            case PM_METRIC_GPU_VENDOR: line.label = "GPU Vendor"; line.units = ""; break;
-
-            case PM_METRIC_GPU_MEM_USED: line.label = "GPU VRAM Used"; line.units = "GB"; break;
-            case PM_METRIC_GPU_MEM_SIZE: line.label = "GPU VRAM Total Size"; line.units = "GB"; break;
-            case PM_METRIC_GPU_MEM_UTILIZATION: line.label = "GPU VRAM Utilization"; line.units = "%"; break;
-            case PM_METRIC_GPU_MEM_POWER: line.label = "GPU VRAM Power"; line.units = "W"; break;
-            case PM_METRIC_GPU_MEM_VOLTAGE: line.label = "GPU VRAM Voltage"; line.units = "V"; break;
-            case PM_METRIC_GPU_MEM_FREQUENCY: line.label = "GPU VRAM Frequency"; line.units = "MHz"; break;
-            case PM_METRIC_GPU_MEM_EFFECTIVE_FREQUENCY: line.label = "GPU VRAM Effective Freq"; line.units = "MHz"; break;
-            case PM_METRIC_GPU_MEM_TEMPERATURE: line.label = "GPU VRAM Temp"; line.units = "C"; break;
-            case PM_METRIC_GPU_MEM_MAX_BANDWIDTH: line.label = "GPU VRAM Max Bandwidth"; line.units = "GB/s"; break;
-            case PM_METRIC_GPU_MEM_WRITE_BANDWIDTH: line.label = "GPU VRAM Write Bandwidth"; line.units = "GB/s"; break;
-            case PM_METRIC_GPU_MEM_READ_BANDWIDTH: line.label = "GPU VRAM Read Bandwidth"; line.units = "GB/s"; break;
-            case PM_METRIC_GPU_MEM_EFFECTIVE_BANDWIDTH: line.label = "GPU VRAM Eff Bandwidth"; line.units = "GB/s"; break;
-
+            case PM_METRIC_GPU_UTILIZATION: line.label = "GPU Utilization"; line.units = "%"; break;
+            case PM_METRIC_GPU_RENDER_COMPUTE_UTILIZATION: line.label = "GPU Render/Compute"; line.units = "%"; break;
+            case PM_METRIC_GPU_MEDIA_UTILIZATION: line.label = "GPU Media Util"; line.units = "%"; break;
             case PM_METRIC_GPU_POWER_LIMITED: line.label = "GPU Power Limited"; line.units = ""; break;
             case PM_METRIC_GPU_TEMPERATURE_LIMITED: line.label = "GPU Temp Limited"; line.units = ""; break;
             case PM_METRIC_GPU_CURRENT_LIMITED: line.label = "GPU Current Limited"; line.units = ""; break;
             case PM_METRIC_GPU_VOLTAGE_LIMITED: line.label = "GPU Voltage Limited"; line.units = ""; break;
             case PM_METRIC_GPU_UTILIZATION_LIMITED: line.label = "GPU Util Limited"; line.units = ""; break;
-
+            case PM_METRIC_GPU_MEM_POWER: line.label = "GPU VRAM Power"; line.units = "W"; break;
+            case PM_METRIC_GPU_MEM_VOLTAGE: line.label = "GPU VRAM Voltage"; line.units = "mV"; break;
+            case PM_METRIC_GPU_MEM_FREQUENCY: line.label = "GPU VRAM Frequency"; line.units = "MHz"; break;
+            case PM_METRIC_GPU_MEM_EFFECTIVE_FREQUENCY: line.label = "GPU VRAM Effective Freq"; line.units = "MHz"; break;
+            case PM_METRIC_GPU_MEM_TEMPERATURE: line.label = "GPU VRAM Temp"; line.units = "C"; break;
+            case PM_METRIC_GPU_MEM_SIZE: line.label = "GPU VRAM Total Size"; line.units = "GB"; break;
+            case PM_METRIC_GPU_MEM_USED: line.label = "GPU VRAM Used"; line.units = "GB"; break;
+            case PM_METRIC_GPU_MEM_UTILIZATION: line.label = "GPU VRAM Utilization"; line.units = "%"; break;
+            case PM_METRIC_GPU_MEM_MAX_BANDWIDTH: line.label = "GPU VRAM Max Bandwidth"; line.units = "GB/s"; break;
+            case PM_METRIC_GPU_MEM_WRITE_BANDWIDTH: line.label = "GPU VRAM Write Bandwidth"; line.units = "GB/s"; break;
+            case PM_METRIC_GPU_MEM_READ_BANDWIDTH: line.label = "GPU VRAM Read Bandwidth"; line.units = "GB/s"; break;
+            case PM_METRIC_GPU_MEM_POWER_LIMITED: line.label = "GPU Mem Power Limited"; line.units = ""; break;
+            case PM_METRIC_GPU_MEM_TEMPERATURE_LIMITED: line.label = "GPU Mem Temp Limited"; line.units = ""; break;
+            case PM_METRIC_GPU_MEM_CURRENT_LIMITED: line.label = "GPU Mem Current Limited"; line.units = ""; break;
+            case PM_METRIC_GPU_MEM_VOLTAGE_LIMITED: line.label = "GPU Mem Voltage Limited"; line.units = ""; break;
+            case PM_METRIC_GPU_MEM_UTILIZATION_LIMITED: line.label = "GPU Mem Util Limited"; line.units = ""; break;
             case PM_METRIC_CPU_UTILIZATION: line.label = "CPU Utilization"; line.units = "%"; break;
-            case PM_METRIC_CPU_BUSY: line.label = "CPU Busy"; line.units = "ms"; break;
-            case PM_METRIC_CPU_WAIT: line.label = "CPU Wait"; line.units = "ms"; break;
-            case PM_METRIC_CPU_FRAME_TIME: line.label = "CPU Frame Time"; line.units = "ms"; break;
-            case PM_METRIC_CPU_POWER: line.label = "CPU Power"; line.units = "W"; break;
             case PM_METRIC_CPU_POWER_LIMIT: line.label = "CPU Power Limit"; line.units = "W"; break;
+            case PM_METRIC_CPU_POWER: line.label = "CPU Power"; line.units = "W"; break;
             case PM_METRIC_CPU_TEMPERATURE: line.label = "CPU Temperature"; line.units = "C"; break;
             case PM_METRIC_CPU_CORE_TEMPERATURE: line.label = "CPU Core Temp"; line.units = "C"; break;
             case PM_METRIC_CPU_FREQUENCY: line.label = "CPU Frequency"; line.units = "MHz"; break;
             case PM_METRIC_CPU_CORE_UTILITY: line.label = "CPU Core Utility"; line.units = "%"; break;
-            case PM_METRIC_CPU_NAME: line.label = "CPU Name"; line.units = ""; break;
-            case PM_METRIC_CPU_VENDOR: line.label = "CPU Vendor"; line.units = ""; break;
-
+            case PM_METRIC_APPLICATION_FPS: line.label = "Application FPS"; line.units = "FPS"; break;
+            case PM_METRIC_FRAME_TYPE: line.label = "Frame Type"; line.units = ""; break;
+            case PM_METRIC_ANIMATION_ERROR: line.label = "Animation Error"; line.units = "ms"; break;
+            case PM_METRIC_ANIMATION_TIME: line.label = "Animation Time"; line.units = "ms"; break;
+            case PM_METRIC_GPU_MEM_EFFECTIVE_BANDWIDTH: line.label = "GPU VRAM Eff Bandwidth"; line.units = "GB/s"; break;
+            case PM_METRIC_GPU_OVERVOLTAGE_PERCENT: line.label = "GPU Overvoltage %"; line.units = "%"; break;
+            case PM_METRIC_GPU_TEMPERATURE_PERCENT: line.label = "GPU Temperature %"; line.units = "%"; break;
+            case PM_METRIC_GPU_POWER_PERCENT: line.label = "GPU Power %"; line.units = "%"; break;
+            case PM_METRIC_GPU_FAN_SPEED_PERCENT: line.label = "GPU Fan Speed %"; line.units = "%"; break;
+            case PM_METRIC_GPU_CARD_POWER: line.label = "GPU Card Power"; line.units = "W"; break;
+            case PM_METRIC_PRESENT_START_TIME: line.label = "Present Start Time"; line.units = "ms"; break;
+            case PM_METRIC_PRESENT_START_QPC: line.label = "Present Start QPC"; line.units = ""; break;
+            case PM_METRIC_BETWEEN_PRESENTS: line.label = "Between Presents"; line.units = "ms"; break;
+            case PM_METRIC_IN_PRESENT_API: line.label = "In Present API"; line.units = "ms"; break;
+            case PM_METRIC_BETWEEN_DISPLAY_CHANGE: line.label = "Between Display Change"; line.units = "ms"; break;
+            case PM_METRIC_UNTIL_DISPLAYED: line.label = "Until Displayed"; line.units = "ms"; break;
+            case PM_METRIC_BETWEEN_SIMULATION_START: line.label = "Between Sim Start"; line.units = "ms"; break;
+            case PM_METRIC_DISPLAYED_FRAME_TIME: line.label = "Displayed Frame Time"; line.units = "ms"; break;
+            case PM_METRIC_BETWEEN_APP_START: line.label = "Between App Start"; line.units = "ms"; break;
+            case PM_METRIC_PRESENTED_FRAME_TIME: line.label = "Presented Frame Time"; line.units = "ms"; break;
+            case PM_METRIC_FLIP_DELAY: line.label = "Flip Delay"; line.units = "ms"; break;
             case PM_METRIC_PSO_COMPILE_COUNT: line.label = "PSO Compile Count"; line.units = ""; break;
             case PM_METRIC_PSO_COMPILE_TIME: line.label = "PSO Compile Time"; line.units = "ms"; break;
             case PM_METRIC_PSO_COMPILE_BUSY_PERCENT: line.label = "PSO Compile Busy %"; line.units = "%"; break;
-
+            case PM_METRIC_PROCESS_ID: line.label = "Process ID"; line.units = ""; break;
+            case PM_METRIC_SESSION_START_QPC: line.label = "Session Start QPC"; line.units = ""; break;
             default:  line.label = "Metric"; line.units = ""; break;
         }
     }
@@ -618,11 +745,12 @@ public:
                              double frameTimeMs, double latencyMs, double animErrorMs,
                              bool isRecording,
                              const ipc::TelemetrySnapshot* telem = nullptr,
-                             bool hudVisible = true)
+                             bool hudVisible = true,
+                             double gpuTimeMs = 0.0, double gpuBusyMs = 0.0, double gpuWaitMs = 0.0)
     {
         uint64_t nowNs = gnumon::common::Clock::GetTimestampNs();
         CheckReloadConfig(nowNs);
-        RecordMetrics(presentFps, displayedFps, frameTimeMs, latencyMs, animErrorMs, telem);
+        RecordMetrics(presentFps, displayedFps, frameTimeMs, latencyMs, animErrorMs, gpuTimeMs, gpuBusyMs, gpuWaitMs, telem);
 
         float uiScale = std::clamp(std::min(static_cast<float>(sw) / 1920.0f, static_cast<float>(sh) / 1080.0f), 0.85f, 2.0f);
         char buf[128];
@@ -726,20 +854,29 @@ public:
                 // Readout Widget
                 if (w.lines.empty()) continue;
                 const auto& line = w.lines[0];
-                const auto& hist = GetHistoryForMetric(line.metricId);
-                float val = CalculateStat(hist, line.statId);
 
                 // Swatch quad
                 AddQuad(verts, padX, curY + 2.0f * uiScale, 8.0f * uiScale, 8.0f * uiScale, line.r, line.g, line.b, line.a);
 
                 // Label
                 const char* statName = "";
-                if (line.statId == 1) statName = "(avg)";
-                else if (line.statId == 2) statName = "(min)";
-                else if (line.statId == 3) statName = "(max)";
-                else if (line.statId == 4) statName = "(raw)";
-                else if (line.statId == 5) statName = "(1%)";
-                else if (line.statId == 6) statName = "(99%)";
+                bool isStringMetric = (line.metricId == PM_METRIC_GPU_NAME ||
+                                       line.metricId == PM_METRIC_CPU_NAME ||
+                                       line.metricId == PM_METRIC_GPU_VENDOR ||
+                                       line.metricId == PM_METRIC_CPU_VENDOR ||
+                                       line.metricId == PM_METRIC_PRESENT_RUNTIME ||
+                                       line.metricId == PM_METRIC_PRESENT_MODE ||
+                                       line.metricId == PM_METRIC_FRAME_TYPE ||
+                                       line.metricId == PM_METRIC_APPLICATION);
+
+                if (!isStringMetric) {
+                    if (line.statId == 1) statName = "(avg)";
+                    else if (line.statId == 2) statName = "(min)";
+                    else if (line.statId == 3) statName = "(max)";
+                    else if (line.statId == 4) statName = "(raw)";
+                    else if (line.statId == 5) statName = "(1%)";
+                    else if (line.statId == 6) statName = "(99%)";
+                }
 
                 if (statName[0] != '\0') {
                     snprintf(buf, sizeof(buf), "%s %s", line.label.c_str(), statName);
@@ -749,32 +886,63 @@ public:
                 AddString(verts, buf, padX + 14.0f * uiScale, curY, 0.75f * uiScale, 0.85f, 0.90f, 0.95f, 0.95f);
 
                 // Value + Units
-                if (!line.units.empty()) {
-                    snprintf(buf, sizeof(buf), "%.1f %s", val, line.units.c_str());
+                if (line.metricId == PM_METRIC_GPU_NAME) {
+                    snprintf(buf, sizeof(buf), "%s", gpuName_.c_str());
+                } else if (line.metricId == PM_METRIC_CPU_NAME) {
+                    snprintf(buf, sizeof(buf), "%s", cpuName_.c_str());
+                } else if (line.metricId == PM_METRIC_GPU_VENDOR) {
+                    snprintf(buf, sizeof(buf), "%s", GetGpuVendorString(gpuName_).c_str());
+                } else if (line.metricId == PM_METRIC_CPU_VENDOR) {
+                    snprintf(buf, sizeof(buf), "%s", GetCpuVendorString(cpuName_).c_str());
+                } else if (line.metricId == PM_METRIC_PRESENT_RUNTIME) {
+                    snprintf(buf, sizeof(buf), "%s", isVulkan_ ? "Vulkan" : "OpenGL");
+                } else if (line.metricId == PM_METRIC_PRESENT_MODE) {
+                    snprintf(buf, sizeof(buf), "%s", "Composed Flip");
+                } else if (line.metricId == PM_METRIC_FRAME_TYPE) {
+                    snprintf(buf, sizeof(buf), "%s", "Application");
+                } else if (line.metricId == PM_METRIC_APPLICATION) {
+                    snprintf(buf, sizeof(buf), "%s", appName_.c_str());
                 } else {
-                    snprintf(buf, sizeof(buf), "%.2f", val);
+                    const auto& hist = GetHistoryForMetric(line.metricId);
+                    float val = CalculateStat(hist, line.statId);
+                    if (!line.units.empty()) {
+                        snprintf(buf, sizeof(buf), "%.1f %s", val, line.units.c_str());
+                    } else {
+                        snprintf(buf, sizeof(buf), "%.2f", val);
+                    }
                 }
-                AddString(verts, buf, cardX + cardW - 120.0f * uiScale, curY, 0.78f * uiScale, line.r, line.g, line.b, 1.0f);
+
+                float valW = GetStringWidth(buf, 0.78f * uiScale);
+                float valX = std::max(cardX + 10.0f * uiScale, (cardX + cardW - 14.0f * uiScale) - valW);
+                AddString(verts, buf, valX, curY, 0.78f * uiScale, line.r, line.g, line.b, 1.0f);
 
                 curY += 20.0f * uiScale;
             } else {
                 // Graph Widget (faithful to PresentMon Windows screenshot!)
                 // 1. Swatches & Header readouts for each line
                 for (const auto& line : w.lines) {
-                    const auto& hist = GetHistoryForMetric(line.metricId);
-                    float val = CalculateStat(hist, line.statId);
-
                     // Swatch quad
                     AddQuad(verts, padX, curY + 3.0f * uiScale, 8.0f * uiScale, 8.0f * uiScale, line.r, line.g, line.b, line.a);
 
                     // Metric label with stat (e.g. "Until Displayed (avg)")
                     const char* statName = "";
-                    if (line.statId == 1) statName = "(avg)";
-                    else if (line.statId == 2) statName = "(min)";
-                    else if (line.statId == 3) statName = "(max)";
-                    else if (line.statId == 4) statName = "(raw)";
-                    else if (line.statId == 5) statName = "(1%)";
-                    else if (line.statId == 6) statName = "(99%)";
+                    bool isStringMetric = (line.metricId == PM_METRIC_GPU_NAME ||
+                                           line.metricId == PM_METRIC_CPU_NAME ||
+                                           line.metricId == PM_METRIC_GPU_VENDOR ||
+                                           line.metricId == PM_METRIC_CPU_VENDOR ||
+                                           line.metricId == PM_METRIC_PRESENT_RUNTIME ||
+                                           line.metricId == PM_METRIC_PRESENT_MODE ||
+                                           line.metricId == PM_METRIC_FRAME_TYPE ||
+                                           line.metricId == PM_METRIC_APPLICATION);
+
+                    if (!isStringMetric) {
+                        if (line.statId == 1) statName = "(avg)";
+                        else if (line.statId == 2) statName = "(min)";
+                        else if (line.statId == 3) statName = "(max)";
+                        else if (line.statId == 4) statName = "(raw)";
+                        else if (line.statId == 5) statName = "(1%)";
+                        else if (line.statId == 6) statName = "(99%)";
+                    }
 
                     if (statName[0] != '\0') {
                         snprintf(buf, sizeof(buf), "%s %s", line.label.c_str(), statName);
@@ -784,12 +952,35 @@ public:
                     AddString(verts, buf, padX + 14.0f * uiScale, curY, 0.76f * uiScale, 0.88f, 0.92f, 0.96f, 0.95f);
 
                     // Value + Units (e.g. "0.39 ms")
-                    if (!line.units.empty()) {
-                        snprintf(buf, sizeof(buf), "%.2f %s", val, line.units.c_str());
+                    if (line.metricId == PM_METRIC_GPU_NAME) {
+                        snprintf(buf, sizeof(buf), "%s", gpuName_.c_str());
+                    } else if (line.metricId == PM_METRIC_CPU_NAME) {
+                        snprintf(buf, sizeof(buf), "%s", cpuName_.c_str());
+                    } else if (line.metricId == PM_METRIC_GPU_VENDOR) {
+                        snprintf(buf, sizeof(buf), "%s", GetGpuVendorString(gpuName_).c_str());
+                    } else if (line.metricId == PM_METRIC_CPU_VENDOR) {
+                        snprintf(buf, sizeof(buf), "%s", GetCpuVendorString(cpuName_).c_str());
+                    } else if (line.metricId == PM_METRIC_PRESENT_RUNTIME) {
+                        snprintf(buf, sizeof(buf), "%s", isVulkan_ ? "Vulkan" : "OpenGL");
+                    } else if (line.metricId == PM_METRIC_PRESENT_MODE) {
+                        snprintf(buf, sizeof(buf), "%s", "Composed Flip");
+                    } else if (line.metricId == PM_METRIC_FRAME_TYPE) {
+                        snprintf(buf, sizeof(buf), "%s", "Application");
+                    } else if (line.metricId == PM_METRIC_APPLICATION) {
+                        snprintf(buf, sizeof(buf), "%s", appName_.c_str());
                     } else {
-                        snprintf(buf, sizeof(buf), "%.2f", val);
+                        const auto& hist = GetHistoryForMetric(line.metricId);
+                        float val = CalculateStat(hist, line.statId);
+                        if (!line.units.empty()) {
+                            snprintf(buf, sizeof(buf), "%.2f %s", val, line.units.c_str());
+                        } else {
+                            snprintf(buf, sizeof(buf), "%.2f", val);
+                        }
                     }
-                    AddString(verts, buf, cardX + cardW - 130.0f * uiScale, curY, 0.78f * uiScale, line.r, line.g, line.b, 1.0f);
+
+                    float valW = GetStringWidth(buf, 0.78f * uiScale);
+                    float valX = std::max(cardX + 10.0f * uiScale, (cardX + cardW - 14.0f * uiScale) - valW);
+                    AddString(verts, buf, valX, curY, 0.78f * uiScale, line.r, line.g, line.b, 1.0f);
 
                     curY += 17.0f * uiScale;
                 }
@@ -821,6 +1012,15 @@ public:
                     float calcMin = 1e9f;
                     float calcMax = -1e9f;
                     for (const auto& line : w.lines) {
+                        bool isStringMetric = (line.metricId == PM_METRIC_GPU_NAME ||
+                                               line.metricId == PM_METRIC_CPU_NAME ||
+                                               line.metricId == PM_METRIC_GPU_VENDOR ||
+                                               line.metricId == PM_METRIC_CPU_VENDOR ||
+                                               line.metricId == PM_METRIC_PRESENT_RUNTIME ||
+                                               line.metricId == PM_METRIC_PRESENT_MODE ||
+                                               line.metricId == PM_METRIC_FRAME_TYPE ||
+                                               line.metricId == PM_METRIC_APPLICATION);
+                        if (isStringMetric) continue;
                         const auto& hist = GetHistoryForMetric(line.metricId);
                         for (float v : hist) {
                             if (v < calcMin) calcMin = v;
@@ -862,6 +1062,15 @@ public:
                 // 3. Render Area Fill and Series Lines
                 for (size_t lIdx = 0; lIdx < w.lines.size(); ++lIdx) {
                     const auto& line = w.lines[lIdx];
+                    bool isStringMetric = (line.metricId == PM_METRIC_GPU_NAME ||
+                                           line.metricId == PM_METRIC_CPU_NAME ||
+                                           line.metricId == PM_METRIC_GPU_VENDOR ||
+                                           line.metricId == PM_METRIC_CPU_VENDOR ||
+                                           line.metricId == PM_METRIC_PRESENT_RUNTIME ||
+                                           line.metricId == PM_METRIC_PRESENT_MODE ||
+                                           line.metricId == PM_METRIC_FRAME_TYPE ||
+                                           line.metricId == PM_METRIC_APPLICATION);
+                    if (isStringMetric) continue;
                     const auto& hist = GetHistoryForMetric(line.metricId);
                     if (hist.size() < 2) continue;
 
@@ -930,15 +1139,27 @@ protected:
     std::deque<float> histDroppedFrames_;
     std::deque<float> histFps_;
     std::deque<float> histAnimError_;
+    std::deque<float> histGpuTime_;
+    std::deque<float> histGpuBusy_;
+    std::deque<float> histGpuWait_;
+    std::deque<float> histCpuBusy_;
+    std::deque<float> histCpuWait_;
     std::deque<float> histGpuUtil_;
     std::deque<float> histGpuPower_;
     std::deque<float> histGpuTemp_;
     std::deque<float> histGpuFreq_;
+    std::deque<float> histGpuVoltage_;
+    std::deque<float> histGpuFanSpeed_;
     std::deque<float> histVramUsed_;
     std::deque<float> histCpuUtil_;
     std::deque<float> histCpuPower_;
     std::deque<float> histCpuTemp_;
     std::deque<float> histCpuFreq_;
+
+    std::string gpuName_ = "Auto-detect GPU";
+    std::string cpuName_ = "Linux CPU";
+    std::string appName_ = "Active App";
+    bool isVulkan_ = true;
 
     std::string toastTitle_;
     std::string toastMessage_;

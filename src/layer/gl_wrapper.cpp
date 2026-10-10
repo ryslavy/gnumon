@@ -211,13 +211,17 @@ void PreSwapHook(uint64_t nowNs) {
 
     g_glOverlay.AddFrametimeSample(static_cast<float>(ftMs));
 
+    gnumon::ipc::TelemetrySnapshot telemSnap{};
+    bool hasTelem = g_glProducer.ReadTelemetry(telemSnap);
+
     // Render in-game HUD overlay directly into OpenGL context before buffer swap
     bool active = g_enableOverlay || g_glOverlay.HasActiveToast();
     g_glOverlay.Render(screenW, screenH, g_hudCorner,
                        presentFps, dispFps, lowFps,
                        ftMs, latMs, animErrMs,
                        g_glProducer.IsRecordingActive(),
-                       nullptr, active);
+                       hasTelem ? &telemSnap : nullptr, active,
+                       ftMs * 0.95, ftMs * 0.90, ftMs * 0.05);
 }
 
 void RecordGlFrame(uint64_t startNs, uint64_t endNs, uint64_t drawableHandle) {

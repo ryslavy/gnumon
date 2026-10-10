@@ -211,7 +211,8 @@ public:
                    uint32_t waitSemCount, const VkSemaphore* pWaitSems,
                    VkSemaphore* outSignalSem,
                    const ipc::TelemetrySnapshot* telem = nullptr,
-                   bool hudVisible = true)
+                   bool hudVisible = true,
+                   double gpuTimeMs = 0.0, double gpuBusyMs = 0.0, double gpuWaitMs = 0.0)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!initialized_ || !device_) return false;
@@ -236,7 +237,8 @@ public:
         std::vector<OverlayVertex> verts;
         GenerateHudVertices(verts, sw, sh, corner,
                             presentFps, displayedFps, fps1PercentLow,
-                            frameTimeMs, latencyMs, animErrorMs, isRecording, telem, hudVisible);
+                            frameTimeMs, latencyMs, animErrorMs, isRecording, telem, hudVisible,
+                            gpuTimeMs, gpuBusyMs, gpuWaitMs);
 
         if (verts.empty() || imageIndex >= sd.vertexMapped.size() || !sd.vertexMapped[imageIndex]) {
             return false;

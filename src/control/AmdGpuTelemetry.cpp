@@ -55,6 +55,57 @@ bool AmdGpuTelemetry::Initialize() {
                     }
                 }
 
+                // Read device ID (e.g. 0x73ff)
+                auto devIdPath = devicePath / "device";
+                if (std::filesystem::exists(devIdPath)) {
+                    std::string devHex = ReadSysfsString(devIdPath);
+                    try {
+                        deviceId_ = std::stoul(devHex, nullptr, 16);
+                    } catch (...) {}
+
+                    if (devHex.rfind("0x", 0) == 0) devHex = devHex.substr(2);
+                    for (char& c : devHex) c = std::tolower(c);
+
+                    // Look up commercial model name in pci.ids
+                    const char* pciPaths[] = {"/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids"};
+                    for (const char* pciPath : pciPaths) {
+                        std::ifstream file(pciPath);
+                        if (!file.is_open()) continue;
+
+                        std::string line;
+                        bool inAmd = false;
+                        while (std::getline(file, line)) {
+                            if (line.empty() || line[0] == '#') continue;
+                            if (line.rfind("1002  ", 0) == 0) {
+                                inAmd = true;
+                                continue;
+                            }
+                            if (inAmd) {
+                                if (line[0] != '\t') break; // left AMD vendor block
+                                if (line.size() > 6 && line[0] == '\t' && line[1] != '\t') {
+                                    std::string id = line.substr(1, 4);
+                                    for (char& c : id) c = std::tolower(c);
+                                    if (id == devHex) {
+                                        size_t start = line.find_first_not_of(" \t", 5);
+                                        if (start != std::string::npos) {
+                                            std::string name = line.substr(start);
+                                            auto bOpen = name.find('[');
+                                            auto bClose = name.find(']', bOpen);
+                                            if (bOpen != std::string::npos && bClose != std::string::npos && bClose > bOpen + 1) {
+                                                gpuModelName_ = "AMD " + name.substr(bOpen + 1, bClose - bOpen - 1);
+                                            } else {
+                                                gpuModelName_ = "AMD " + name;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (gpuModelName_ != "AMD Radeon Graphics") break;
+                    }
+                }
+
                 isInitialized_ = true;
                 return true;
             }
@@ -69,7 +120,8 @@ bool AmdGpuTelemetry::Sample(GpuMetrics& metrics) {
     }
 
     metrics.vendor = PM_DEVICE_VENDOR_AMD;
-    metrics.deviceName = "AMD Radeon Graphics";
+    metrics.deviceId = deviceId_;
+    metrics.deviceName = gpuModelName_;
 
     // Utilization (%)
     metrics.gpuUtilizationPercent = ReadSysfsDouble(cardPath_ / "gpu_busy_percent");

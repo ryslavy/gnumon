@@ -17,6 +17,8 @@ public:
 
 private:
     std::string providerName_ = "AMD drm/hwmon";
+    std::string gpuModelName_ = "AMD Radeon Graphics";
+    uint32_t deviceId_ = 0;
     std::filesystem::path cardPath_;
     std::filesystem::path hwmonPath_;
     bool isInitialized_ = false;
