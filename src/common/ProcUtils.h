@@ -60,89 +60,22 @@ inline bool IsRingAlive(uint32_t pid) {
     return std::filesystem::exists("/proc/" + std::to_string(pid));
 }
 
-// Cleans up orphaned /dev/shm/gnumon_ring_* files from dead processes
-inline void CleanStaleRings() {
-    std::filesystem::path shmDir("/dev/shm");
-    if (!std::filesystem::exists(shmDir)) return;
-
-    for (const auto& entry : std::filesystem::directory_iterator(shmDir)) {
-        std::string name = entry.path().filename().string();
-        if (name.rfind("gnumon_ring_", 0) == 0) {
-            std::string pidStr = name.substr(12);
-            try {
-                uint32_t pid = std::stoul(pidStr);
-                if (pid > 0 && !IsRingAlive(pid)) {
-                    shm_unlink(("/" + name).c_str());
-                }
-            } catch (...) {}
-        }
+inline bool IsProcessNameBlacklisted(const std::string& name) {
+    if (name.empty()) return false;
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    static const char* blacklisted[] = {
+        "gnome-shell", "kwin_wayland", "kwin_x11", "kwin", "hyprland",
+        "sway", "wayfire", "weston", "xwayland", "plasmashell", "plasma-workspac",
+        "gnumon", "gnumon-gui", "gnumond", "gnumon-cli", "steam", "steamwebhelper",
+        "discord", "slack", "obs", "gamescope", "python", "python3",
+        "antigravity", "cursor", "code", "electron", "chrome", "chromium", "firefox",
+        "explorer.exe", "services.exe", "winedevice.exe", "svchost.exe", "conhost.exe"
+    };
+    for (const char* b : blacklisted) {
+        if (lower == b || lower.find(b) != std::string::npos) return true;
     }
-}
-
-struct RingCandidate {
-    uint32_t pid{0};
-    uint64_t writeIndex{0};
-    uint64_t lastTimestampNs{0};
-};
-
-// Scans /dev/shm for live running processes with an active gnumon ring buffer,
-// sorting processes that are actively rendering frames to the very top.
-inline std::vector<uint32_t> GetActiveRingPids() {
-    CleanStaleRings();
-    std::vector<RingCandidate> candidates;
-    std::filesystem::path shmDir("/dev/shm");
-    if (!std::filesystem::exists(shmDir)) return {};
-
-    for (const auto& entry : std::filesystem::directory_iterator(shmDir)) {
-        std::string name = entry.path().filename().string();
-        if (name.rfind("gnumon_ring_", 0) == 0) {
-            std::string pidStr = name.substr(12);
-            try {
-                uint32_t pid = std::stoul(pidStr);
-                if (pid > 0 && IsRingAlive(pid)) {
-                    RingCandidate cand;
-                    cand.pid = pid;
-                    std::string shmPath = "/" + name;
-                    int fd = shm_open(shmPath.c_str(), O_RDONLY, 0666);
-                    if (fd >= 0) {
-                        void* ptr = mmap(nullptr, sizeof(ipc::SharedRingHeader), PROT_READ, MAP_SHARED, fd, 0);
-                        if (ptr != MAP_FAILED) {
-                            const auto* ring = static_cast<const ipc::SharedRingHeader*>(ptr);
-                            if (ring->magic == 0x474E554D) {
-                                cand.writeIndex = ring->writeIndex.load(std::memory_order_relaxed);
-                                if (cand.writeIndex > 0) {
-                                    uint64_t lastIdx = (cand.writeIndex - 1) & ipc::RING_BUFFER_MASK;
-                                    cand.lastTimestampNs = ring->events[lastIdx].presentStartTimestampNs;
-                                }
-                            }
-                            munmap(ptr, sizeof(ipc::SharedRingHeader));
-                        }
-                        close(fd);
-                    }
-                    candidates.push_back(cand);
-                }
-            } catch (...) {}
-        }
-    }
-
-    std::sort(candidates.begin(), candidates.end(), [](const RingCandidate& a, const RingCandidate& b) {
-        if (a.lastTimestampNs > 0 && b.lastTimestampNs > 0) {
-            return a.lastTimestampNs > b.lastTimestampNs;
-        }
-        if (a.writeIndex > 0 && b.writeIndex == 0) return true;
-        if (b.writeIndex > 0 && a.writeIndex == 0) return false;
-        if (a.writeIndex != b.writeIndex) {
-            return a.writeIndex > b.writeIndex;
-        }
-        return a.pid > b.pid;
-    });
-
-    std::vector<uint32_t> result;
-    result.reserve(candidates.size());
-    for (const auto& c : candidates) {
-        result.push_back(c.pid);
-    }
-    return result;
+    return false;
 }
 
 inline std::string GetProcessName(uint32_t pid) {
@@ -234,6 +167,96 @@ inline std::string GetProcessName(uint32_t pid) {
     }
 
     return "Game";
+}
+
+// Cleans up orphaned or blacklisted /dev/shm/gnumon_ring_* files
+inline void CleanStaleRings() {
+    std::filesystem::path shmDir("/dev/shm");
+    if (!std::filesystem::exists(shmDir)) return;
+
+    for (const auto& entry : std::filesystem::directory_iterator(shmDir)) {
+        std::string name = entry.path().filename().string();
+        if (name.rfind("gnumon_ring_", 0) == 0) {
+            std::string pidStr = name.substr(12);
+            try {
+                uint32_t pid = std::stoul(pidStr);
+                if (pid > 0) {
+                    if (!IsRingAlive(pid) || IsProcessNameBlacklisted(GetProcessName(pid))) {
+                        shm_unlink(("/" + name).c_str());
+                    }
+                }
+            } catch (...) {}
+        }
+    }
+}
+
+struct RingCandidate {
+    uint32_t pid{0};
+    uint64_t writeIndex{0};
+    uint64_t lastTimestampNs{0};
+};
+
+// Scans /dev/shm for live running processes with an active gnumon ring buffer,
+// sorting processes that are actively rendering frames to the very top.
+inline std::vector<uint32_t> GetActiveRingPids() {
+    CleanStaleRings();
+    std::vector<RingCandidate> candidates;
+    std::filesystem::path shmDir("/dev/shm");
+    if (!std::filesystem::exists(shmDir)) return {};
+
+    for (const auto& entry : std::filesystem::directory_iterator(shmDir)) {
+        std::string name = entry.path().filename().string();
+        if (name.rfind("gnumon_ring_", 0) == 0) {
+            std::string pidStr = name.substr(12);
+            try {
+                uint32_t pid = std::stoul(pidStr);
+                if (pid > 0 && IsRingAlive(pid)) {
+                    if (IsProcessNameBlacklisted(GetProcessName(pid))) {
+                        continue;
+                    }
+                    RingCandidate cand;
+                    cand.pid = pid;
+                    std::string shmPath = "/" + name;
+                    int fd = shm_open(shmPath.c_str(), O_RDONLY, 0666);
+                    if (fd >= 0) {
+                        void* ptr = mmap(nullptr, sizeof(ipc::SharedRingHeader), PROT_READ, MAP_SHARED, fd, 0);
+                        if (ptr != MAP_FAILED) {
+                            const auto* ring = static_cast<const ipc::SharedRingHeader*>(ptr);
+                            if (ring->magic == 0x474E554D) {
+                                cand.writeIndex = ring->writeIndex.load(std::memory_order_relaxed);
+                                if (cand.writeIndex > 0) {
+                                    uint64_t lastIdx = (cand.writeIndex - 1) & ipc::RING_BUFFER_MASK;
+                                    cand.lastTimestampNs = ring->events[lastIdx].presentStartTimestampNs;
+                                }
+                            }
+                            munmap(ptr, sizeof(ipc::SharedRingHeader));
+                        }
+                        close(fd);
+                    }
+                    candidates.push_back(cand);
+                }
+            } catch (...) {}
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const RingCandidate& a, const RingCandidate& b) {
+        if (a.lastTimestampNs > 0 && b.lastTimestampNs > 0) {
+            return a.lastTimestampNs > b.lastTimestampNs;
+        }
+        if (a.writeIndex > 0 && b.writeIndex == 0) return true;
+        if (b.writeIndex > 0 && a.writeIndex == 0) return false;
+        if (a.writeIndex != b.writeIndex) {
+            return a.writeIndex > b.writeIndex;
+        }
+        return a.pid > b.pid;
+    });
+
+    std::vector<uint32_t> result;
+    result.reserve(candidates.size());
+    for (const auto& c : candidates) {
+        result.push_back(c.pid);
+    }
+    return result;
 }
 
 struct ProcessInfo {
