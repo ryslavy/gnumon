@@ -11,31 +11,96 @@ struct MetricDef {
     bool isNumeric;
 };
 
+#include <gnumon/PresentMonAPI.h>
+
 static const MetricDef kMetrics[] = {
-    {138, "Between Display Change", true},
-    {139, "Until Displayed", true},
-    {144, "Dropped Frames", true},
-    {12, "FPS-Presents", true},
-    {11, "FPS-Displayed", true},
-    {87, "FrameTime-Presents", true},
-    {8, "FrameTime-App", true},
-    {25, "Display Latency", true},
-    {26, "Click to Photon Latency", true},
-    {27, "Ms Animation Error", true},
-    {33, "GPU Utilization", true},
-    {28, "GPU Power", true},
-    {31, "GPU Temperature", true},
-    {30, "GPU Frequency", true},
-    {29, "GPU Voltage", true},
-    {47, "GPU VRAM", true},
-    {3, "GPU Name", false},
-    {34, "CPU Utilization", true},
-    {89, "CPU Power", true},
-    {90, "CPU Temperature", true},
-    {91, "CPU Frequency", true},
-    {9, "CPU Busy", true},
-    {10, "CPU Wait", true},
-    {5, "CPU Name", false}
+    // --- Display & Frametime ---
+    {PM_METRIC_BETWEEN_DISPLAY_CHANGE, "Between Display Change", true},
+    {PM_METRIC_UNTIL_DISPLAYED, "Until Displayed", true},
+    {PM_METRIC_DROPPED_FRAMES, "Dropped Frames", true},
+    {PM_METRIC_APPLICATION_FPS, "Application FPS", true},
+    {PM_METRIC_DISPLAYED_FPS, "Displayed FPS", true},
+    {PM_METRIC_PRESENTED_FPS, "Presented FPS", true},
+    {PM_METRIC_PRESENTED_FRAME_TIME, "Presented Frame Time", true},
+    {PM_METRIC_DISPLAYED_FRAME_TIME, "Displayed Frame Time", true},
+    {PM_METRIC_BETWEEN_PRESENTS, "Between Presents", true},
+    {PM_METRIC_IN_PRESENT_API, "In Present API", true},
+    {PM_METRIC_ANIMATION_ERROR, "Animation Error", true},
+    {PM_METRIC_ANIMATION_TIME, "Animation Time", true},
+    {PM_METRIC_FLIP_DELAY, "Flip Delay", true},
+    {PM_METRIC_SYNC_INTERVAL, "Sync Interval", true},
+    {PM_METRIC_ALLOWS_TEARING, "Allows Tearing", true},
+    {PM_METRIC_PRESENT_MODE, "Present Mode", false},
+    {PM_METRIC_PRESENT_RUNTIME, "Present Runtime", false},
+    {PM_METRIC_FRAME_TYPE, "Frame Type", false},
+
+    // --- Latency ---
+    {PM_METRIC_DISPLAY_LATENCY, "Display Latency", true},
+    {PM_METRIC_CLICK_TO_PHOTON_LATENCY, "Click to Photon Latency", true},
+    {PM_METRIC_ALL_INPUT_TO_PHOTON_LATENCY, "All Input to Photon Latency", true},
+    {PM_METRIC_INSTRUMENTED_LATENCY, "Instrumented Latency", true},
+    {PM_METRIC_PC_LATENCY, "PC Latency", true},
+    {PM_METRIC_GPU_LATENCY, "GPU Latency", true},
+    {PM_METRIC_RENDER_PRESENT_LATENCY, "Render Present Latency", true},
+
+    // --- GPU Timing & Core Telemetry ---
+    {PM_METRIC_GPU_TIME, "GPU Time", true},
+    {PM_METRIC_GPU_BUSY, "GPU Busy", true},
+    {PM_METRIC_GPU_WAIT, "GPU Wait", true},
+    {PM_METRIC_GPU_UTILIZATION, "GPU Utilization", true},
+    {PM_METRIC_GPU_RENDER_COMPUTE_UTILIZATION, "GPU Render/Compute Util", true},
+    {PM_METRIC_GPU_MEDIA_UTILIZATION, "GPU Media Util", true},
+    {PM_METRIC_GPU_POWER, "GPU Power", true},
+    {PM_METRIC_GPU_CARD_POWER, "GPU Card Power", true},
+    {PM_METRIC_GPU_SUSTAINED_POWER_LIMIT, "GPU Sustained Power Limit", true},
+    {PM_METRIC_GPU_VOLTAGE, "GPU Voltage", true},
+    {PM_METRIC_GPU_FREQUENCY, "GPU Frequency", true},
+    {PM_METRIC_GPU_EFFECTIVE_FREQUENCY, "GPU Effective Frequency", true},
+    {PM_METRIC_GPU_TEMPERATURE, "GPU Temperature", true},
+    {PM_METRIC_GPU_VOLTAGE_REGULATOR_TEMPERATURE, "GPU VRM Temperature", true},
+    {PM_METRIC_GPU_FAN_SPEED, "GPU Fan Speed", true},
+    {PM_METRIC_GPU_NAME, "GPU Name", false},
+    {PM_METRIC_GPU_VENDOR, "GPU Vendor", false},
+
+    // --- GPU Memory Telemetry ---
+    {PM_METRIC_GPU_MEM_USED, "GPU VRAM Used", true},
+    {PM_METRIC_GPU_MEM_SIZE, "GPU VRAM Total Size", true},
+    {PM_METRIC_GPU_MEM_UTILIZATION, "GPU VRAM Utilization", true},
+    {PM_METRIC_GPU_MEM_POWER, "GPU VRAM Power", true},
+    {PM_METRIC_GPU_MEM_VOLTAGE, "GPU VRAM Voltage", true},
+    {PM_METRIC_GPU_MEM_FREQUENCY, "GPU VRAM Frequency", true},
+    {PM_METRIC_GPU_MEM_EFFECTIVE_FREQUENCY, "GPU VRAM Effective Freq", true},
+    {PM_METRIC_GPU_MEM_TEMPERATURE, "GPU VRAM Temperature", true},
+    {PM_METRIC_GPU_MEM_MAX_BANDWIDTH, "GPU VRAM Max Bandwidth", true},
+    {PM_METRIC_GPU_MEM_WRITE_BANDWIDTH, "GPU VRAM Write Bandwidth", true},
+    {PM_METRIC_GPU_MEM_READ_BANDWIDTH, "GPU VRAM Read Bandwidth", true},
+    {PM_METRIC_GPU_MEM_EFFECTIVE_BANDWIDTH, "GPU VRAM Effective Bandwidth", true},
+
+    // --- GPU Performance Limiters ---
+    {PM_METRIC_GPU_POWER_LIMITED, "GPU Power Limited", true},
+    {PM_METRIC_GPU_TEMPERATURE_LIMITED, "GPU Temperature Limited", true},
+    {PM_METRIC_GPU_CURRENT_LIMITED, "GPU Current Limited", true},
+    {PM_METRIC_GPU_VOLTAGE_LIMITED, "GPU Voltage Limited", true},
+    {PM_METRIC_GPU_UTILIZATION_LIMITED, "GPU Utilization Limited", true},
+
+    // --- CPU Telemetry & Workload ---
+    {PM_METRIC_CPU_UTILIZATION, "CPU Utilization", true},
+    {PM_METRIC_CPU_BUSY, "CPU Busy", true},
+    {PM_METRIC_CPU_WAIT, "CPU Wait", true},
+    {PM_METRIC_CPU_FRAME_TIME, "CPU Frame Time", true},
+    {PM_METRIC_CPU_POWER, "CPU Power", true},
+    {PM_METRIC_CPU_POWER_LIMIT, "CPU Power Limit", true},
+    {PM_METRIC_CPU_TEMPERATURE, "CPU Temperature", true},
+    {PM_METRIC_CPU_CORE_TEMPERATURE, "CPU Core Temperature", true},
+    {PM_METRIC_CPU_FREQUENCY, "CPU Frequency", true},
+    {PM_METRIC_CPU_CORE_UTILITY, "CPU Core Utility", true},
+    {PM_METRIC_CPU_NAME, "CPU Name", false},
+    {PM_METRIC_CPU_VENDOR, "CPU Vendor", false},
+
+    // --- Shader / PSO Compilation ---
+    {PM_METRIC_PSO_COMPILE_COUNT, "PSO Compile Count", true},
+    {PM_METRIC_PSO_COMPILE_TIME, "PSO Compile Time", true},
+    {PM_METRIC_PSO_COMPILE_BUSY_PERCENT, "PSO Compile Busy %", true}
 };
 
 LoadoutRowWidget::LoadoutRowWidget(const LoadoutWidget& widget, int index, QWidget *parent)
