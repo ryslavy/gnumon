@@ -210,20 +210,23 @@ if(Qt6_FOUND)
         src/gui/main.cpp
         src/gui/MainWindow.cpp
         src/gui/MainWindow.h
-        src/gui/FrametimeGraphWidget.cpp
-        src/gui/FrametimeGraphWidget.h
-        src/gui/MetricsConfigDialog.cpp
-        src/gui/MetricsConfigDialog.h
-        src/gui/SettingsDialog.cpp
-        src/gui/SettingsDialog.h
-        src/gui/AllMetricsDialog.cpp
-        src/gui/AllMetricsDialog.h
-        src/gui/MetricGraphWidget.cpp
-        src/gui/MetricGraphWidget.h
-        src/gui/ServiceSetupDialog.cpp
-        src/gui/ServiceSetupDialog.h
-        src/gui/PresentMonOverlay.cpp
-        src/gui/PresentMonOverlay.h
+        src/gui/MainViewWidget.cpp
+        src/gui/MainViewWidget.h
+        src/gui/SettingsPage.cpp
+        src/gui/SettingsPage.h
+        src/gui/LoadoutConfigPage.cpp
+        src/gui/LoadoutConfigPage.h
+        src/gui/LoadoutRowWidget.cpp
+        src/gui/LoadoutRowWidget.h
+        src/gui/ToggleSwitch.cpp
+        src/gui/ToggleSwitch.h
+        src/gui/HotkeyPillWidget.cpp
+        src/gui/HotkeyPillWidget.h
+        src/gui/QuadrantPositioner.cpp
+        src/gui/QuadrantPositioner.h
+        src/gui/ColorPickerButton.cpp
+        src/gui/ColorPickerButton.h
+        src/gui/AppConfig.h
     )
     target_link_libraries(gnumon-gui PRIVATE
         Qt6::Core

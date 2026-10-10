@@ -24,19 +24,17 @@ Linux-native port of Intel PresentMon providing real-time frame timing, GPU/CPU 
   - **NVIDIA GPUs**: NVML dynamic runtime integration (power, dynamic power management limits, temperatures, clocks, VRAM usage, GPU utilization).
   - **Intel Arc / iGPU**: DRM sysfs and hwmon sensors.
   - **CPUs**: sysfs RAPL power caps (`constraint_0_power_limit_uj`), coretemp/k10temp temperatures, per-core utilization, and cpufreq clock speeds.
-- **LACT-Style Service & Permissions Setup**:
-  - Built-in GUI Manager (`⚡ Service & Setup...`) for 1-click installation and management.
-  - Systemd user and system daemon (`gnumond`) control (Start, Stop, Enable, Disable).
-  - Polkit/pkexec udev rule installer (`99-gnumon-input.rules` with `uaccess`) granting non-root access to mouse click-to-photon latency and global hotkeys under Wayland and Gamescope.
+- **1:1 Intel PresentMon Windows UI Parity (Single-Window, Zero Popups)**:
+  - Exact layout, typography, and card-based workflow faithful to Intel PresentMon 2.x (Process Tracking, Presets [BASIC, GAME EXPERIENCE, GPU FOCUS, POWER/TEMP, CUSTOM], Capture Duration, Capture Hotkey, and Capture Storage).
+  - **Loadout Configuration Editor**: Full widget loadout editor with reorderable metric rows, readout/graph display modes, stat selection (avg, 99%, min, max), color swatches, and JSON save/load (`p2c-cap-load` 1.0.0 format).
+  - **Integrated Settings Navigation**: Left drawer navigation (`< TOP`, `Overlay`, `Data`, `Capture`, `Logging`, `Other`, `About`) directly within the main window with zero popup dialogs.
+  - **Built-in Linux System & Service Integration**: Seamlessly embedded in the "Other" page — 1-click systemd daemon (`gnumond`) control, polkit/pkexec udev input permissions for Click-to-Photon latency and Wayland hotkeys, and 64/32-bit Vulkan layers installation.
+  - **Deep Blue Status Bar**: Real-time display of tracked process, recording state (`● REC`), Autohide status, polling frequency, and overlay draw rate.
 - **Global Hotkeys** (Works across Wayland, Gamescope, and fullscreen games without window focus):
-  - **F8**: Cycle In-Game Overlay Presets (Compact → Standard → Detailed).
-  - **F9**: Toggle In-Game Overlay HUD.
-  - **F10**: Start / Stop benchmark CSV recording.
-- **Lossless CSV Benchmarking**: Fast, lossless capture of every single frame event with full telemetry data.
-- **Desktop GUI (`gnumon-gui`)**:
-  - Live historical multi-metric graph analyzer with dual Y-axes, hover tooltips, and time window selection (2s to 60s).
-  - Full PresentMon 2.x Metrics Dictionary inspector (80+ parameters).
-  - Floating desktop overlay and Mini-HUD.
+  - **F8 / F11 / Ctrl+Shift+P**: Cycle Presets.
+  - **F9 / Ctrl+Shift+O**: Toggle In-Game Overlay HUD.
+  - **F10 / Ctrl+Shift+K**: Start / Stop benchmark CSV recording.
+- **Lossless CSV Benchmarking**: Fast, lossless capture of every single frame event with full hardware telemetry data.
 
 ## Installation & Packages
 

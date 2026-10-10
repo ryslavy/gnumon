@@ -1,24 +1,19 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QStackedWidget>
 #include <QLabel>
-#include <QPushButton>
-#include <QComboBox>
 #include <QTimer>
-#include <QProgressBar>
-#include <fstream>
-#include "../../include/gnumon/PresentMonAPI.h"
-#include "FrametimeGraphWidget.h"
-#include "MetricsConfigDialog.h"
-#include "SettingsDialog.h"
-#include "AllMetricsDialog.h"
-#include "ServiceSetupDialog.h"
-#include "AppConfig.h"
-#include "PresentMonOverlay.h"
-
 #include <QKeyEvent>
-#include <QMouseEvent>
-#include <QPoint>
+#include <fstream>
+#include <vector>
+#include <string>
+
+#include "../../include/gnumon/PresentMonAPI.h"
+#include "AppConfig.h"
+#include "MainViewWidget.h"
+#include "SettingsPage.h"
+#include "LoadoutConfigPage.h"
 
 namespace gnumon::gui {
 
@@ -29,94 +24,60 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
-public slots:
     void OnOpenFullMetrics();
-    void OnOpenServiceSetup();
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
-    void mousePressEvent(QMouseEvent *event) override;
-    void mouseMoveEvent(QMouseEvent *event) override;
 
 private slots:
     void OnPollTimer();
-    void OnToggleRecording();
+    void OnProcessChanged(uint32_t pid, const QString& name);
     void OnToggleOverlay();
-    void OnToggleInGameOverlay();
+    void OnCyclePreset();
+    void OnToggleRecording();
     void OnOpenCapturesFolder();
-    void OnProcessChanged(int index);
-    void OnRefreshProcesses();
-    void OnConfigureMetrics();
-    void OnConfigureSettings();
-    void OnToggleLayerInstall();
-    void OnToggleMiniOverlay();
+    void OnEditLoadout();
+    void OnOpenSettings();
+    void OnBackToMain();
+    void OnConfigChanged();
 
 private:
     void SetupUi();
-    void PopulateProcessList();
-    void ApplyMetricsConfig();
-    void ApplyConfig();
+    void RefreshProcesses();
+    void AutoTargetProcess();
+    void UpdateStatusBar();
     QString GetCapturesDirectory() const;
 
     PM_SESSION_HANDLE session_ = nullptr;
-    PM_DYNAMIC_QUERY_HANDLE query_ = nullptr;
     PM_FRAME_QUERY_HANDLE frameQuery_ = nullptr;
     uint32_t frameBlobSize_ = 0;
+
     QTimer *pollTimer_ = nullptr;
-    PresentMonOverlay *overlay_ = nullptr;
+    QTimer *procRefreshTimer_ = nullptr;
 
-    // UI elements
-    QComboBox *comboProcess_ = nullptr;
-    QPushButton *btnRefreshProcess_ = nullptr;
-    QPushButton *btnConfigMetrics_ = nullptr;
-    QPushButton *btnSettings_ = nullptr;
-    QPushButton *btnServiceSetup_ = nullptr;
-    QPushButton *btnInstallLayer_ = nullptr;
-    QPushButton *btnInGameOverlay_ = nullptr;
-    QPushButton *btnOverlay_ = nullptr;
-    QPushButton *btnMiniOverlay_ = nullptr;
-    QPushButton *btnOpenCaptures_ = nullptr;
-    QPushButton *btnRecord_ = nullptr;
-    QPushButton *btnFullMetrics_ = nullptr;
-    AllMetricsDialog *allMetricsDialog_ = nullptr;
-    ServiceSetupDialog *serviceSetupDialog_ = nullptr;
-    QString currentCapturePath_;
-    QWidget *topContainer_ = nullptr;
-    FrametimeGraphWidget *graphWidget_ = nullptr;
-    QWidget *graphGroup_ = nullptr;
-
-    QWidget *gpuGroup_ = nullptr;
-    QLabel *lblGpuName_ = nullptr;
-    QLabel *lblGpuPower_ = nullptr;
-    QLabel *lblGpuTemp_ = nullptr;
-    QLabel *lblGpuUtil_ = nullptr;
-    QLabel *lblGpuFreq_ = nullptr;
-    QLabel *lblGpuVram_ = nullptr;
-    QProgressBar *barGpuUtil_ = nullptr;
-
-    QWidget *cpuGroup_ = nullptr;
-    QLabel *lblCpuName_ = nullptr;
-    QLabel *lblCpuUtil_ = nullptr;
-    QLabel *lblCpuPower_ = nullptr;
-    QLabel *lblCpuTemp_ = nullptr;
-    QLabel *lblCpuFreq_ = nullptr;
-    QProgressBar *barCpuUtil_ = nullptr;
-
-    QWidget *latencyGroup_ = nullptr;
-    QLabel *lblLatencySummary_ = nullptr;
-    QLabel *lblAnimErrorSummary_ = nullptr;
-    QLabel *lblPacingSummary_ = nullptr;
-
-    QLabel *lblStatus_ = nullptr;
-    bool isRecording_ = false;
-    bool isMiniOverlay_ = false;
-    bool inGameOverlayActive_ = false;
-    QPoint dragPosition_;
-    uint32_t trackedPid_ = 0;
-    std::ofstream csvFile_;
-    uint64_t recordedFramesCount_ = 0;
-    MetricsConfig metricsConfig_{};
     AppConfig config_{};
+    uint32_t trackedPid_ = 0;
+    QString trackedProcessName_ = "";
+    bool isRecording_ = false;
+    uint64_t recordedFramesCount_ = 0;
+    uint64_t recordingStartMs_ = 0;
+    std::ofstream csvFile_;
+    QString currentCapturePath_;
+    bool inGameOverlayActive_ = true;
+
+    // UI Stack
+    QStackedWidget *rootStack_ = nullptr;
+    MainViewWidget *mainView_ = nullptr;
+    SettingsPage *settingsPage_ = nullptr;
+    LoadoutConfigPage *loadoutPage_ = nullptr;
+
+    // Bottom Status Bar
+    QWidget *statusBarWidget_ = nullptr;
+    QLabel *lblStatusProcess_ = nullptr;
+    QLabel *lblStatusRec_ = nullptr;
+    QLabel *lblStatusHide_ = nullptr;
+    QLabel *lblStatusPoll_ = nullptr;
+    QLabel *lblStatusFps_ = nullptr;
 };
 
 } // namespace gnumon::gui
