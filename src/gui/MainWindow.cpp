@@ -410,11 +410,12 @@ void MainWindow::OnToggleRecording() {
 
         // Write official Intel PresentMon CSV Header
         csvFile_ << "Application,ProcessID,SwapChainAddress,PresentRuntime,SyncInterval,PresentFlags,AllowsTearing,PresentMode,"
-                 << "FrameType,CPUStartQPC,FrameTime,CPUBusy,CPUWait,GPULatency,GPUTime,GPUBusy,GPUWait,VideoBusy,"
+                 << "FrameType,CPUStartQPC,FrameTime,FPS,CPUBusy,CPUWait,GPULatency,GPUTime,GPUBusy,GPUWait,VideoBusy,"
                  << "DisplayLatency,DisplayedTime,AnimationError,AnimationTime,MsFlipDelay,AllInputToPhotonLatency,"
                  << "ClickToPhotonLatency,InstrumentedLatency,GPUPowerW,GPUTemperatureC,GPUUtilizationPercent,GPUFrequencyMHz,"
                  << "CPUPowerW,CPUTemperatureC,CPUUtilizationPercent\n";
         csvFile_.flush();
+        captureStats_.Reset();
 
         std::vector<PM_QUERY_ELEMENT> frameElements = {
             { PM_METRIC_PROCESS_ID, PM_STAT_NONE, 0, 0, offsetof(FramePayload, processId), sizeof(uint32_t) },
@@ -462,6 +463,7 @@ void MainWindow::OnToggleRecording() {
             pmSetRecordingState(session_, false);
         }
         if (csvFile_.is_open()) {
+            WriteCaptureSummary();
             csvFile_.flush();
             csvFile_.close();
         }
@@ -499,7 +501,10 @@ void MainWindow::OnPollTimer() {
             while (pmConsumeFrames(frameQuery_, trackedPid_, buffer.data(), &numFrames) == PM_STATUS_SUCCESS && numFrames > 0) {
                 for (uint32_t i = 0; i < numFrames; ++i) {
                     auto* frame = reinterpret_cast<FramePayload*>(buffer.data() + (i * frameBlobSize_));
+                    captureStats_.AddFrame(frame->frameTimeMs, frame->gpuUtil, frame->gpuTemp, frame->gpuPower,
+                                           frame->gpuFreq, frame->cpuUtil, frame->cpuTemp, frame->cpuPower);
                     std::string appName = trackedProcessName_.isEmpty() ? "Unknown" : trackedProcessName_.toStdString();
+                    double fpsVal = (frame->frameTimeMs > 0.0001) ? (1000.0 / frame->frameTimeMs) : 0.0;
                     csvFile_ << appName << ","
                              << frame->processId << ","
                              << "0x" << std::hex << frame->swapChain << std::dec << ","
@@ -512,6 +517,8 @@ void MainWindow::OnPollTimer() {
                              << frame->cpuStartQpc << ","
                              << std::fixed << std::setprecision(4)
                              << frame->frameTimeMs << ","
+                             << std::setprecision(2)
+                             << fpsVal << ","
                              << frame->cpuBusyMs << ","
                              << frame->cpuWaitMs << ","
                              << frame->gpuLatencyMs << ","
@@ -546,16 +553,28 @@ void MainWindow::OnPollTimer() {
 
     // 1. Sync In-Game and Engine recording/overlay state bi-directionally
     if (session_) {
-        bool ringRec = false;
-        if (pmGetRecordingState(session_, &ringRec) == PM_STATUS_SUCCESS) {
-            if (ringRec != isRecording_) {
-                OnToggleRecording();
+        bool recTriggered = false;
+        if (pmCheckRecordHotkeyTriggered(session_, &recTriggered) == PM_STATUS_SUCCESS && recTriggered) {
+            OnToggleRecording();
+        } else {
+            bool ringRec = false;
+            if (pmGetRecordingState(session_, &ringRec) == PM_STATUS_SUCCESS) {
+                if (ringRec != isRecording_) {
+                    OnToggleRecording();
+                }
             }
         }
-        bool ringOverlay = inGameOverlayActive_;
-        if (pmGetInGameOverlayState(session_, &ringOverlay) == PM_STATUS_SUCCESS) {
-            if (ringOverlay != inGameOverlayActive_) {
-                inGameOverlayActive_ = ringOverlay;
+
+        bool hudTriggered = false;
+        if (pmCheckInGameOverlayHotkeyTriggered(session_, &hudTriggered) == PM_STATUS_SUCCESS && hudTriggered) {
+            inGameOverlayActive_ = !inGameOverlayActive_;
+            pmSetInGameOverlayState(session_, inGameOverlayActive_);
+        } else {
+            bool ringOverlay = inGameOverlayActive_;
+            if (pmGetInGameOverlayState(session_, &ringOverlay) == PM_STATUS_SUCCESS) {
+                if (ringOverlay != inGameOverlayActive_) {
+                    inGameOverlayActive_ = ringOverlay;
+                }
             }
         }
     }
@@ -573,6 +592,143 @@ void MainWindow::OnPollTimer() {
     }
 
     UpdateStatusBar();
+}
+
+void MainWindow::WriteCaptureSummary() {
+    if (!csvFile_.is_open()) return;
+
+    double durationSec = (recordingStartMs_ > 0)
+        ? (static_cast<double>(QDateTime::currentMSecsSinceEpoch() - recordingStartMs_) / 1000.0)
+        : 0.0;
+    size_t totalFrames = captureStats_.frameTimesMs.size();
+
+    double avgFps = (durationSec > 0.0) ? (static_cast<double>(totalFrames) / durationSec) : 0.0;
+    double onePercentLowFps = 0.0;
+    double pointOnePercentLowFps = 0.0;
+    double minFps = 0.0;
+    double maxFps = 0.0;
+
+    double avgFt = 0.0;
+    double p99Ft = 0.0;
+    double p999Ft = 0.0;
+    double minFt = 0.0;
+    double maxFt = 0.0;
+
+    if (!captureStats_.fpsList.empty()) {
+        std::vector<double> sortedFps = captureStats_.fpsList;
+        std::sort(sortedFps.begin(), sortedFps.end());
+        minFps = sortedFps.front();
+        maxFps = sortedFps.back();
+        size_t idx01 = static_cast<size_t>(std::floor(sortedFps.size() * 0.01));
+        onePercentLowFps = sortedFps[std::min(idx01, sortedFps.size() - 1)];
+        size_t idx001 = static_cast<size_t>(std::floor(sortedFps.size() * 0.001));
+        pointOnePercentLowFps = sortedFps[std::min(idx001, sortedFps.size() - 1)];
+    }
+
+    if (!captureStats_.frameTimesMs.empty()) {
+        std::vector<double> sortedFt = captureStats_.frameTimesMs;
+        std::sort(sortedFt.begin(), sortedFt.end());
+        minFt = sortedFt.front();
+        maxFt = sortedFt.back();
+        double sumFt = 0.0;
+        for (double ft : sortedFt) sumFt += ft;
+        avgFt = sumFt / static_cast<double>(sortedFt.size());
+        size_t idx99 = static_cast<size_t>(std::floor(sortedFt.size() * 0.99));
+        p99Ft = sortedFt[std::min(idx99, sortedFt.size() - 1)];
+        size_t idx999 = static_cast<size_t>(std::floor(sortedFt.size() * 0.999));
+        p999Ft = sortedFt[std::min(idx999, sortedFt.size() - 1)];
+    }
+
+    double avgGpuUtil = captureStats_.sampleCount ? (captureStats_.sumGpuUtil / captureStats_.sampleCount) : 0.0;
+    double avgGpuTemp = captureStats_.sampleCount ? (captureStats_.sumGpuTemp / captureStats_.sampleCount) : 0.0;
+    double avgGpuPower = captureStats_.sampleCount ? (captureStats_.sumGpuPower / captureStats_.sampleCount) : 0.0;
+    double avgGpuFreq = captureStats_.sampleCount ? (captureStats_.sumGpuFreq / captureStats_.sampleCount) : 0.0;
+    double avgCpuUtil = captureStats_.sampleCount ? (captureStats_.sumCpuUtil / captureStats_.sampleCount) : 0.0;
+    double avgCpuTemp = captureStats_.sampleCount ? (captureStats_.sumCpuTemp / captureStats_.sampleCount) : 0.0;
+    double avgCpuPower = captureStats_.sampleCount ? (captureStats_.sumCpuPower / captureStats_.sampleCount) : 0.0;
+
+    std::string appName = trackedProcessName_.isEmpty() ? "Unknown" : trackedProcessName_.toStdString();
+    std::string dateTimeStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss").toStdString();
+
+    // 1. Append Benchmark Summary block to CSV
+    csvFile_ << "\n# ========================================================\n"
+             << "# GNUMON BENCHMARK SUMMARY\n"
+             << "# ========================================================\n"
+             << "# Application:           " << appName << "\n"
+             << "# Process ID:            " << trackedPid_ << "\n"
+             << "# Date / Time:           " << dateTimeStr << "\n"
+             << "# Benchmark Duration:    " << std::fixed << std::setprecision(2) << durationSec << " s\n"
+             << "# Total Recorded Frames: " << totalFrames << "\n"
+             << "#\n"
+             << "# --- Frame Rate (FPS) ---\n"
+             << "# Average FPS:           " << avgFps << "\n"
+             << "# 1% Low FPS:            " << onePercentLowFps << "\n"
+             << "# 0.1% Low FPS:          " << pointOnePercentLowFps << "\n"
+             << "# Minimum FPS:           " << minFps << "\n"
+             << "# Maximum FPS:           " << maxFps << "\n"
+             << "#\n"
+             << "# --- Frame Time (ms) ---\n"
+             << "# Average Frame Time:    " << avgFt << " ms\n"
+             << "# 99th Percentile:       " << p99Ft << " ms\n"
+             << "# 99.9th Percentile:     " << p999Ft << " ms\n"
+             << "# Minimum Frame Time:    " << minFt << " ms\n"
+             << "# Maximum Frame Time:    " << maxFt << " ms\n"
+             << "#\n"
+             << "# --- Hardware Telemetry (Averages) ---\n"
+             << "# GPU Utilization:       " << avgGpuUtil << " %\n"
+             << "# GPU Temperature:       " << avgGpuTemp << " C\n"
+             << "# GPU Power:             " << avgGpuPower << " W\n"
+             << "# GPU Clock:             " << avgGpuFreq << " MHz\n"
+             << "# CPU Utilization:       " << avgCpuUtil << " %\n"
+             << "# CPU Temperature:       " << avgCpuTemp << " C\n"
+             << "# CPU Power:             " << avgCpuPower << " W\n"
+             << "# ========================================================\n";
+
+    // 2. Also write companion _summary.txt file
+    QString summaryPath = currentCapturePath_;
+    if (summaryPath.endsWith(".csv", Qt::CaseInsensitive)) {
+        summaryPath.chop(4);
+    }
+    summaryPath += "_summary.txt";
+    std::ofstream sumFile(summaryPath.toStdString());
+    if (sumFile.is_open()) {
+        sumFile << "========================================================\n"
+                << "GNUMON BENCHMARK SUMMARY\n"
+                << "========================================================\n"
+                << "Application:             " << appName << "\n"
+                << "Process ID:              " << trackedPid_ << "\n"
+                << "Date / Time:             " << dateTimeStr << "\n"
+                << "Benchmark Duration:      " << std::fixed << std::setprecision(2) << durationSec << " s\n"
+                << "Total Recorded Frames:   " << totalFrames << "\n\n"
+                << "--------------------------------------------------------\n"
+                << "FRAME RATE (FPS)\n"
+                << "--------------------------------------------------------\n"
+                << "Average FPS:             " << avgFps << " FPS\n"
+                << "1% Low FPS:              " << onePercentLowFps << " FPS\n"
+                << "0.1% Low FPS:            " << pointOnePercentLowFps << " FPS\n"
+                << "Minimum FPS:             " << minFps << " FPS\n"
+                << "Maximum FPS:             " << maxFps << " FPS\n\n"
+                << "--------------------------------------------------------\n"
+                << "FRAME TIME (ms)\n"
+                << "--------------------------------------------------------\n"
+                << "Average Frame Time:      " << avgFt << " ms\n"
+                << "99th Percentile:         " << p99Ft << " ms\n"
+                << "99.9th Percentile:       " << p999Ft << " ms\n"
+                << "Minimum Frame Time:      " << minFt << " ms\n"
+                << "Maximum Frame Time:      " << maxFt << " ms\n\n"
+                << "--------------------------------------------------------\n"
+                << "HARDWARE TELEMETRY (AVERAGES)\n"
+                << "--------------------------------------------------------\n"
+                << "GPU Utilization:         " << avgGpuUtil << " %\n"
+                << "GPU Temperature:         " << avgGpuTemp << " C\n"
+                << "GPU Power:               " << avgGpuPower << " W\n"
+                << "GPU Clock:               " << avgGpuFreq << " MHz\n"
+                << "CPU Utilization:         " << avgCpuUtil << " %\n"
+                << "CPU Temperature:         " << avgCpuTemp << " C\n"
+                << "CPU Power:               " << avgCpuPower << " W\n"
+                << "========================================================\n";
+        sumFile.close();
+    }
 }
 
 QString MainWindow::GetCapturesDirectory() const {

@@ -56,8 +56,16 @@ bool TelemetryCoordinator::StartTrackingProcess(uint32_t pid) {
         if (tgid > 0 && tgid != pid) {
             if (frameConsumer_.Open(tgid)) {
                 trackedPid_ = tgid;
-                if (recordingActive_) frameConsumer_.SetRecordingActive(true);
-                if (inGameOverlayEnabled_) frameConsumer_.SetOverlayEnabled(true);
+                if (frameConsumer_.IsRecordingActive()) {
+                    recordingActive_ = true;
+                } else if (recordingActive_) {
+                    frameConsumer_.SetRecordingActive(true);
+                }
+                if (frameConsumer_.IsOverlayEnabled()) {
+                    inGameOverlayEnabled_ = true;
+                } else if (inGameOverlayEnabled_) {
+                    frameConsumer_.SetOverlayEnabled(true);
+                }
                 return true;
             }
         }
@@ -67,8 +75,16 @@ bool TelemetryCoordinator::StartTrackingProcess(uint32_t pid) {
     if (pid > 0) {
         bool ok = frameConsumer_.Open(pid);
         if (ok) {
-            if (recordingActive_) frameConsumer_.SetRecordingActive(true);
-            if (inGameOverlayEnabled_) frameConsumer_.SetOverlayEnabled(true);
+            if (frameConsumer_.IsRecordingActive()) {
+                recordingActive_ = true;
+            } else if (recordingActive_) {
+                frameConsumer_.SetRecordingActive(true);
+            }
+            if (frameConsumer_.IsOverlayEnabled()) {
+                inGameOverlayEnabled_ = true;
+            } else if (inGameOverlayEnabled_) {
+                frameConsumer_.SetOverlayEnabled(true);
+            }
         }
         return ok;
     }
@@ -153,10 +169,14 @@ void TelemetryCoordinator::EnsureConsumerConnectedLocked() {
         }
         if (target > 0) {
             if (frameConsumer_.Open(target)) {
-                if (recordingActive_) {
+                if (frameConsumer_.IsRecordingActive()) {
+                    recordingActive_ = true;
+                } else if (recordingActive_) {
                     frameConsumer_.SetRecordingActive(true);
                 }
-                if (inGameOverlayEnabled_) {
+                if (frameConsumer_.IsOverlayEnabled()) {
+                    inGameOverlayEnabled_ = true;
+                } else if (inGameOverlayEnabled_) {
                     frameConsumer_.SetOverlayEnabled(true);
                 }
             }
@@ -221,6 +241,7 @@ void TelemetryCoordinator::SetRecordingState(bool active) {
 
 bool TelemetryCoordinator::IsRecordingActive() const {
     std::lock_guard<std::mutex> lock(dataMutex_);
+    const_cast<TelemetryCoordinator*>(this)->EnsureConsumerConnectedLocked();
     if (const_cast<TelemetryCoordinator*>(this)->frameConsumer_.IsConnected()) {
         const_cast<TelemetryCoordinator*>(this)->recordingActive_ = const_cast<TelemetryCoordinator*>(this)->frameConsumer_.IsRecordingActive();
     }
@@ -355,6 +376,7 @@ bool TelemetryCoordinator::ConsumeInGameHudHotkeyToggle() {
         if (frameConsumer_.IsConnected()) {
             bool ringHud = frameConsumer_.IsOverlayEnabled();
             if (ringHud != inGameOverlayEnabled_) {
+                inGameOverlayEnabled_ = ringHud;
                 triggered = true;
             }
         }
@@ -374,6 +396,7 @@ bool TelemetryCoordinator::ConsumeRecordHotkeyToggle() {
         if (frameConsumer_.IsConnected()) {
             bool ringRec = frameConsumer_.IsRecordingActive();
             if (ringRec != recordingActive_) {
+                recordingActive_ = ringRec;
                 triggered = true;
             }
         }
@@ -402,6 +425,7 @@ void TelemetryCoordinator::SetInGameOverlayEnabled(bool enabled) {
 
 bool TelemetryCoordinator::IsInGameOverlayEnabled() const {
     std::lock_guard<std::mutex> lock(dataMutex_);
+    const_cast<TelemetryCoordinator*>(this)->EnsureConsumerConnectedLocked();
     if (const_cast<TelemetryCoordinator*>(this)->frameConsumer_.IsConnected()) {
         const_cast<TelemetryCoordinator*>(this)->inGameOverlayEnabled_ = const_cast<TelemetryCoordinator*>(this)->frameConsumer_.IsOverlayEnabled();
     }

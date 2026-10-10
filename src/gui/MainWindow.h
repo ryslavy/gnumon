@@ -48,6 +48,52 @@ private:
     void AutoTargetProcess();
     void UpdateStatusBar();
     QString GetCapturesDirectory() const;
+    void WriteCaptureSummary();
+
+    struct CaptureStats {
+        std::vector<double> frameTimesMs;
+        std::vector<double> fpsList;
+        double sumGpuUtil = 0.0;
+        double sumGpuTemp = 0.0;
+        double sumGpuPower = 0.0;
+        double sumGpuFreq = 0.0;
+        double sumCpuUtil = 0.0;
+        double sumCpuTemp = 0.0;
+        double sumCpuPower = 0.0;
+        double sumCpuFreq = 0.0;
+        uint64_t sampleCount = 0;
+
+        void Reset() {
+            frameTimesMs.clear();
+            fpsList.clear();
+            sumGpuUtil = 0.0;
+            sumGpuTemp = 0.0;
+            sumGpuPower = 0.0;
+            sumGpuFreq = 0.0;
+            sumCpuUtil = 0.0;
+            sumCpuTemp = 0.0;
+            sumCpuPower = 0.0;
+            sumCpuFreq = 0.0;
+            sampleCount = 0;
+        }
+
+        void AddFrame(double ftMs, double gUtil, double gTemp, double gPwr, double gFreq,
+                      double cUtil, double cTemp, double cPwr) {
+            if (ftMs > 0.0001) {
+                frameTimesMs.push_back(ftMs);
+                fpsList.push_back(1000.0 / ftMs);
+            }
+            sumGpuUtil += gUtil;
+            sumGpuTemp += gTemp;
+            sumGpuPower += gPwr;
+            sumGpuFreq += gFreq;
+            sumCpuUtil += cUtil;
+            sumCpuTemp += cTemp;
+            sumCpuPower += cPwr;
+            sampleCount++;
+        }
+    };
+    CaptureStats captureStats_{};
 
     PM_SESSION_HANDLE session_ = nullptr;
     PM_FRAME_QUERY_HANDLE frameQuery_ = nullptr;

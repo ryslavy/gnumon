@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <atomic>
 #include <string>
 #include <sys/mman.h>
@@ -60,8 +61,8 @@ struct alignas(64) TelemetrySnapshot {
     char gpuName[64]{};
     char cpuName[64]{};
     uint32_t valid = 0;
+    uint32_t pad0 = 0;
     uint64_t timestampNs = 0;
-    uint32_t reserved = 0;
 };
 
 struct alignas(64) SharedRingHeader {
@@ -76,6 +77,12 @@ struct alignas(64) SharedRingHeader {
     TelemetrySnapshot telemetry{};
     FrameEvent events[RING_BUFFER_CAPACITY];
 };
+
+static_assert(sizeof(FrameEvent) == 128, "FrameEvent must be 128 bytes");
+static_assert(sizeof(TelemetrySnapshot) == 192, "TelemetrySnapshot must be 192 bytes");
+static_assert(offsetof(SharedRingHeader, telemetry) == 192, "SharedRingHeader telemetry offset mismatch");
+static_assert(offsetof(SharedRingHeader, events) == 384, "SharedRingHeader events offset mismatch");
+static_assert(sizeof(SharedRingHeader) == 384 + RING_BUFFER_CAPACITY * 128, "SharedRingHeader size mismatch");
 
 class FrameRingProducer {
 public:

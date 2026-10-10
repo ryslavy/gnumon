@@ -113,6 +113,7 @@ static int GetConfiguredHudPreset() {
 
 static bool g_enableOverlay = GetConfiguredHudDefault();
 static bool g_lastProducerOverlay = GetConfiguredHudDefault();
+static bool g_lastProducerRecording = false;
 static int g_hudCorner = GetConfiguredHudCorner();
 
 static bool IsProcessBlacklisted() {
@@ -167,6 +168,29 @@ static bool IsProcessBlacklisted() {
         "chrome",
         "chromium",
         "firefox",
+        "missioncenter",
+        "mission-center",
+        "gnome-system-monitor",
+        "system-monitoring-center",
+        "resources",
+        "btop",
+        "htop",
+        "nautilus",
+        "dolphin",
+        "thunar",
+        "nemo",
+        "pcmanfm",
+        "alacritty",
+        "kitty",
+        "wezterm",
+        "foot",
+        "konsole",
+        "gnome-terminal",
+        "thunderbird",
+        "spotify",
+        "lutris",
+        "heroic",
+        "bottles",
         "explorer.exe",
         "services.exe",
         "winedevice.exe",
@@ -241,6 +265,7 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
     if (ev.toggleCapture) {
         bool newRec = !g_glProducer.IsRecordingActive();
         g_glProducer.SetRecordingActive(newRec);
+        g_lastProducerRecording = newRec;
         g_glOverlay.TriggerToast(newRec ? "Benchmark Capture" : "Capture Saved",
                                 newRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
@@ -258,6 +283,12 @@ void PreSwapHook(uint64_t nowNs) {
     if (currentProducerOverlay != g_lastProducerOverlay) {
         g_enableOverlay = currentProducerOverlay;
         g_lastProducerOverlay = currentProducerOverlay;
+    }
+    bool isRec = g_glProducer.IsRecordingActive();
+    if (isRec != g_lastProducerRecording) {
+        g_lastProducerRecording = isRec;
+        g_glOverlay.TriggerToast(isRec ? "Benchmark Capture" : "Capture Saved",
+                                 isRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
     }
 
     // Query active OpenGL Viewport dimensions

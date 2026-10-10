@@ -70,6 +70,10 @@ inline bool IsProcessNameBlacklisted(const std::string& name) {
         "gnumon", "gnumon-gui", "gnumond", "gnumon-cli", "steam", "steamwebhelper",
         "discord", "slack", "obs", "gamescope", "python", "python3",
         "antigravity", "cursor", "code", "electron", "chrome", "chromium", "firefox",
+        "missioncenter", "mission-center", "gnome-system-monitor", "system-monitoring-center",
+        "resources", "btop", "htop", "nautilus", "dolphin", "thunar", "nemo", "pcmanfm",
+        "alacritty", "kitty", "wezterm", "foot", "konsole", "gnome-terminal",
+        "thunderbird", "spotify", "lutris", "heroic", "bottles",
         "explorer.exe", "services.exe", "winedevice.exe", "svchost.exe", "conhost.exe"
     };
     for (const char* b : blacklisted) {

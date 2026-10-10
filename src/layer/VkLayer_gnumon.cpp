@@ -182,6 +182,7 @@ static int GetConfiguredHudPreset() {
 
 static bool g_enableOverlay = GetConfiguredHudDefault();
 static bool g_lastProducerOverlay = GetConfiguredHudDefault();
+static bool g_lastProducerRecording = false;
 static int g_hudCorner = GetConfiguredHudCorner();
 thread_local uint64_t g_currentCpuStartNs = 0;
 thread_local bool g_hasAcquiredImage = false;
@@ -249,6 +250,29 @@ static bool IsProcessBlacklisted() {
         "chrome",
         "chromium",
         "firefox",
+        "missioncenter",
+        "mission-center",
+        "gnome-system-monitor",
+        "system-monitoring-center",
+        "resources",
+        "btop",
+        "htop",
+        "nautilus",
+        "dolphin",
+        "thunar",
+        "nemo",
+        "pcmanfm",
+        "alacritty",
+        "kitty",
+        "wezterm",
+        "foot",
+        "konsole",
+        "gnome-terminal",
+        "thunderbird",
+        "spotify",
+        "lutris",
+        "heroic",
+        "bottles",
         "explorer.exe",
         "services.exe",
         "winedevice.exe",
@@ -876,6 +900,7 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
     if (ev.toggleCapture) {
         bool newRec = !g_producer.IsRecordingActive();
         g_producer.SetRecordingActive(newRec);
+        g_lastProducerRecording = newRec;
         g_overlayRenderer.TriggerToast(newRec ? "Benchmark Capture" : "Capture Saved",
                                        newRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
@@ -896,8 +921,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
         g_enableOverlay = currentProducerOverlay;
         g_lastProducerOverlay = currentProducerOverlay;
     }
-    bool overlayActive = g_enableOverlay || g_overlayRenderer.HasActiveToast();
     bool isRec = g_producer.IsRecordingActive();
+    if (isRec != g_lastProducerRecording) {
+        g_lastProducerRecording = isRec;
+        g_overlayRenderer.TriggerToast(isRec ? "Benchmark Capture" : "Capture Saved",
+                                       isRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
+    }
+    bool overlayActive = g_enableOverlay || g_overlayRenderer.HasActiveToast();
     bool overlayRendered = false;
     VkSemaphore overlaySignalSem = VK_NULL_HANDLE;
 
