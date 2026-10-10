@@ -67,13 +67,31 @@ void LoadoutConfigPage::SetupUi() {
     headerLayout->addStretch();
     mainLayout->addLayout(headerLayout);
 
-    // Toolbar: Default adapter + Clear all widgets
+    // Toolbar: Default adapter + Preset Templates + Clear all widgets
     auto *toolbarLayout = new QHBoxLayout();
     auto *lblAdapter = new QLabel("Default adapter:", this);
     lblAdapter->setStyleSheet("color: #a0a4b8; font-size: 13px;");
     comboAdapter_ = new QComboBox(this);
-    comboAdapter_->setMinimumWidth(260);
+    comboAdapter_->setMinimumWidth(220);
     comboAdapter_->addItem("Auto-detect / Primary GPU", "");
+
+    auto *lblPreset = new QLabel("Template:", this);
+    lblPreset->setStyleSheet("color: #a0a4b8; font-size: 13px; margin-left: 12px;");
+    auto *comboPreset = new QComboBox(this);
+    comboPreset->setMinimumWidth(220);
+    comboPreset->addItem("Game Experience (Multi-Graph)", 1);
+    comboPreset->addItem("Basic (FPS & FrameTime)", 0);
+    comboPreset->addItem("GPU Focus", 2);
+    comboPreset->addItem("Power & Temperature", 3);
+    int pIdx = comboPreset->findData(config_->selectedPreset);
+    if (pIdx >= 0) comboPreset->setCurrentIndex(pIdx);
+    connect(comboPreset, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, comboPreset](int) {
+        int p = comboPreset->currentData().toInt();
+        config_->ApplyPreset(p);
+        config_->Save();
+        RebuildRows();
+        emit loadoutChanged();
+    });
 
     btnClearAll_ = new QPushButton("CLEAR ALL WIDGETS", this);
     btnClearAll_->setStyleSheet(
@@ -95,6 +113,8 @@ void LoadoutConfigPage::SetupUi() {
 
     toolbarLayout->addWidget(lblAdapter);
     toolbarLayout->addWidget(comboAdapter_);
+    toolbarLayout->addWidget(lblPreset);
+    toolbarLayout->addWidget(comboPreset);
     toolbarLayout->addStretch();
     toolbarLayout->addWidget(btnClearAll_);
     mainLayout->addLayout(toolbarLayout);

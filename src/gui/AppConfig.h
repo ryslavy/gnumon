@@ -37,6 +37,9 @@ struct LoadoutWidget {
     int key = 0;
     WidgetType widgetType = WidgetType::Readout;
     GraphType graphType = GraphType::Line;
+    float rangeMin = 0.0f;
+    float rangeMax = 50.0f;
+    bool autoScale = true;
     QVector<LoadoutMetricItem> metrics;
 };
 
@@ -84,6 +87,9 @@ struct LoadoutConfig {
             w.key = 3;
             w.widgetType = WidgetType::Graph;
             w.graphType = GraphType::Line;
+            w.rangeMin = 0.0f;
+            w.rangeMax = 50.0f;
+            w.autoScale = true;
             LoadoutMetricItem m;
             m.metricId = 87; // FrameTime-Presents
             m.statId = 1;
@@ -96,24 +102,110 @@ struct LoadoutConfig {
     }
 
     static LoadoutConfig MakeGameExperience() {
-        LoadoutConfig c = MakeDefaultBasic();
-        // Add Display Latency & Animation Error
+        LoadoutConfig c;
+        // Widget 0: Until Displayed (Graph, avg + raw)
+        {
+            LoadoutWidget w;
+            w.key = 0;
+            w.widgetType = WidgetType::Graph;
+            w.graphType = GraphType::Line;
+            w.rangeMin = 0.0f;
+            w.rangeMax = 1.0f;
+            w.autoScale = true;
+
+            LoadoutMetricItem mAvg;
+            mAvg.metricId = 139; // Until Displayed
+            mAvg.statId = 1;     // avg
+            mAvg.lineColor = QColor(0, 229, 255);
+            mAvg.fillColor = QColor(0, 180, 216, 50);
+            w.metrics.append(mAvg);
+
+            LoadoutMetricItem mRaw;
+            mRaw.metricId = 139;
+            mRaw.statId = 4;     // raw
+            mRaw.lineColor = QColor(105, 240, 174);
+            w.metrics.append(mRaw);
+
+            c.widgets.append(w);
+        }
+        // Widget 1: Between Display Change (Graph, avg + 99% + raw)
+        {
+            LoadoutWidget w;
+            w.key = 1;
+            w.widgetType = WidgetType::Graph;
+            w.graphType = GraphType::Line;
+            w.rangeMin = 9.0f;
+            w.rangeMax = 11.0f;
+            w.autoScale = true;
+
+            LoadoutMetricItem mAvg;
+            mAvg.metricId = 138; // Between Display Change
+            mAvg.statId = 1;     // avg
+            mAvg.lineColor = QColor(0, 229, 255);
+            mAvg.fillColor = QColor(0, 180, 216, 60);
+            w.metrics.append(mAvg);
+
+            LoadoutMetricItem m99;
+            m99.metricId = 138;
+            m99.statId = 6;     // 99%
+            m99.lineColor = QColor(255, 82, 82);
+            w.metrics.append(m99);
+
+            LoadoutMetricItem mRaw;
+            mRaw.metricId = 138;
+            mRaw.statId = 4;     // raw
+            mRaw.lineColor = QColor(105, 240, 174);
+            w.metrics.append(mRaw);
+
+            c.widgets.append(w);
+        }
+        // Widget 2: Dropped Frames (Graph, avg)
+        {
+            LoadoutWidget w;
+            w.key = 2;
+            w.widgetType = WidgetType::Graph;
+            w.graphType = GraphType::Line;
+            w.rangeMin = 0.0f;
+            w.rangeMax = 1.0f;
+            w.autoScale = false;
+
+            LoadoutMetricItem mAvg;
+            mAvg.metricId = 144; // Dropped Frames
+            mAvg.statId = 1;     // avg
+            mAvg.lineColor = QColor(0, 229, 255);
+            w.metrics.append(mAvg);
+
+            c.widgets.append(w);
+        }
+        // Widget 3: FPS-Presents (Readout)
+        {
+            LoadoutWidget w;
+            w.key = 3;
+            w.widgetType = WidgetType::Readout;
+            LoadoutMetricItem m;
+            m.metricId = 12; // FPS
+            m.statId = 1;    // avg
+            w.metrics.append(m);
+            c.widgets.append(w);
+        }
+        // Widget 4: GPU Utilization (Readout)
         {
             LoadoutWidget w;
             w.key = 4;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 25; // Display Latency
+            m.metricId = 33; // GPU Util
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
         }
+        // Widget 5: CPU Utilization (Readout)
         {
             LoadoutWidget w;
             w.key = 5;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 27; // Animation Error
+            m.metricId = 34; // CPU Util
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -235,6 +327,9 @@ struct LoadoutConfig {
             wObj["key"] = w.key;
             wObj["widgetType"] = static_cast<int>(w.widgetType);
             wObj["graphType"] = static_cast<int>(w.graphType);
+            wObj["rangeMin"] = w.rangeMin;
+            wObj["rangeMax"] = w.rangeMax;
+            wObj["autoScale"] = w.autoScale;
 
             QJsonArray metricsArr;
             for (const auto& m : w.metrics) {
@@ -286,6 +381,9 @@ struct LoadoutConfig {
             w.key = wObj["key"].toInt(i);
             w.widgetType = static_cast<WidgetType>(wObj["widgetType"].toInt(1));
             w.graphType = static_cast<GraphType>(wObj["graphType"].toInt(0));
+            w.rangeMin = static_cast<float>(wObj["rangeMin"].toDouble(0.0));
+            w.rangeMax = static_cast<float>(wObj["rangeMax"].toDouble(50.0));
+            w.autoScale = wObj["autoScale"].toBool(true);
 
             QJsonArray metricsArr = wObj["metrics"].toArray();
             for (int j = 0; j < metricsArr.size(); ++j) {
@@ -484,6 +582,28 @@ struct AppConfig {
         s.setValue("windowSize", dataWindowSize);
         s.setValue("perMetricDevice", dataPerMetricDevice);
         s.setValue("defaultAdapter", defaultAdapter);
+        s.endGroup();
+
+        s.beginGroup("Loadout");
+        s.setValue("widgetCount", loadout.widgets.size());
+        for (int i = 0; i < loadout.widgets.size(); ++i) {
+            const auto& w = loadout.widgets[i];
+            QString pfx = QString("w%1_").arg(i);
+            s.setValue(pfx + "type", w.widgetType == WidgetType::Graph ? "graph" : "readout");
+            s.setValue(pfx + "graphType", w.graphType == GraphType::Histogram ? "histogram" : "line");
+            s.setValue(pfx + "rangeMin", w.rangeMin);
+            s.setValue(pfx + "rangeMax", w.rangeMax);
+            s.setValue(pfx + "autoScale", w.autoScale);
+            s.setValue(pfx + "lineCount", w.metrics.size());
+            for (int j = 0; j < w.metrics.size(); ++j) {
+                const auto& m = w.metrics[j];
+                QString lpfx = QString("%1l%2_").arg(pfx).arg(j);
+                s.setValue(lpfx + "metricId", m.metricId);
+                s.setValue(lpfx + "statId", m.statId);
+                s.setValue(lpfx + "lineColor", m.lineColor.name(QColor::HexArgb));
+                s.setValue(lpfx + "fillColor", m.fillColor.name(QColor::HexArgb));
+            }
+        }
         s.endGroup();
 
         s.sync();
