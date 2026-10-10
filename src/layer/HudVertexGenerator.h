@@ -76,15 +76,25 @@ public:
 
     void EnsureDeviceNames() {
         if (cpuName_.empty() || cpuName_ == "Linux CPU") {
-            std::ifstream cpuinfo("/proc/cpuinfo");
-            if (cpuinfo.is_open()) {
-                std::string line;
-                while (std::getline(cpuinfo, line)) {
-                    if (line.rfind("model name", 0) == 0) {
-                        auto pos = line.find(':');
-                        if (pos != std::string::npos && pos + 2 < line.size()) {
-                            cpuName_ = line.substr(pos + 2);
-                            break;
+            int fd = open("/proc/cpuinfo", O_RDONLY | O_CLOEXEC);
+            if (fd >= 0) {
+                char buf[2048]{};
+                ssize_t n = read(fd, buf, sizeof(buf) - 1);
+                close(fd);
+                if (n > 0) {
+                    buf[n] = '\0';
+                    const char* p = strstr(buf, "model name");
+                    if (p) {
+                        const char* colon = strchr(p, ':');
+                        if (colon) {
+                            colon++;
+                            while (*colon == ' ' || *colon == '\t') colon++;
+                            const char* end = strchr(colon, '\n');
+                            if (end) {
+                                cpuName_.assign(colon, end - colon);
+                            } else {
+                                cpuName_ = colon;
+                            }
                         }
                     }
                 }
@@ -92,66 +102,35 @@ public:
         }
         if (gpuName_.empty() || gpuName_ == "Auto-detect GPU") {
             for (int i = 0; i < 8; ++i) {
-                auto dev = std::filesystem::path("/sys/class/drm") / ("card" + std::to_string(i)) / "device";
-                auto devIdPath = dev / "device";
-                auto vendorPath = dev / "vendor";
-                if (std::filesystem::exists(devIdPath) && std::filesystem::exists(vendorPath)) {
-                    std::ifstream vf(vendorPath);
-                    std::string vendor;
-                    vf >> vendor;
-                    std::ifstream df(devIdPath);
-                    std::string devHex;
-                    df >> devHex;
-                    if (devHex.rfind("0x", 0) == 0) devHex = devHex.substr(2);
-                    for (char& c : devHex) c = std::tolower(c);
-
-                    const char* pciPaths[] = {"/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids"};
-                    for (const char* pciPath : pciPaths) {
-                        std::ifstream file(pciPath);
-                        if (!file.is_open()) continue;
-                        std::string line;
-                        bool inVendor = false;
-                        std::string targetPrefix = (vendor == "0x1002") ? "1002  " : (vendor == "0x8086" ? "8086  " : "10de  ");
-                        while (std::getline(file, line)) {
-                            if (line.empty() || line[0] == '#') continue;
-                            if (line.rfind(targetPrefix, 0) == 0) {
-                                inVendor = true;
-                                continue;
-                            }
-                            if (inVendor) {
-                                if (line[0] != '\t') break;
-                                if (line.size() > 6 && line[0] == '\t' && line[1] != '\t') {
-                                    std::string id = line.substr(1, 4);
-                                    for (char& c : id) c = std::tolower(c);
-                                    if (id == devHex) {
-                                        size_t start = line.find_first_not_of(" \t", 5);
-                                        if (start != std::string::npos) {
-                                            std::string name = line.substr(start);
-                                            auto bOpen = name.find('[');
-                                            auto bClose = name.find(']', bOpen);
-                                            if (bOpen != std::string::npos && bClose != std::string::npos && bClose > bOpen + 1) {
-                                                gpuName_ = name.substr(bOpen + 1, bClose - bOpen - 1);
-                                            } else {
-                                                gpuName_ = name;
-                                            }
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if (!gpuName_.empty() && gpuName_ != "Auto-detect GPU") break;
+                char path[128];
+                snprintf(path, sizeof(path), "/sys/class/drm/card%d/device/vendor", i);
+                int fd = open(path, O_RDONLY | O_CLOEXEC);
+                if (fd >= 0) {
+                    char vendor[32]{};
+                    ssize_t n = read(fd, vendor, sizeof(vendor) - 1);
+                    close(fd);
+                    if (n > 0) {
+                        vendor[n] = '\0';
+                        if (strstr(vendor, "1002")) gpuName_ = "AMD Radeon GPU";
+                        else if (strstr(vendor, "10de")) gpuName_ = "NVIDIA GeForce GPU";
+                        else if (strstr(vendor, "8086")) gpuName_ = "Intel Graphics";
+                        break;
                     }
-                    if (!gpuName_.empty() && gpuName_ != "Auto-detect GPU") break;
                 }
+            }
+            if (gpuName_.empty()) {
+                gpuName_ = "GPU";
             }
         }
         if (appName_.empty() || appName_ == "Active App") {
-            std::ifstream commFile("/proc/self/comm");
-            if (commFile.is_open()) {
-                std::string comm;
-                if (std::getline(commFile, comm) && !comm.empty()) {
-                    appName_ = comm;
+            int fd = open("/proc/self/comm", O_RDONLY | O_CLOEXEC);
+            if (fd >= 0) {
+                char comm[64]{};
+                ssize_t n = read(fd, comm, sizeof(comm) - 1);
+                close(fd);
+                if (n > 0) {
+                    while (n > 0 && (comm[n - 1] == '\n' || comm[n - 1] == '\r')) comm[--n] = '\0';
+                    if (comm[0] != '\0') appName_ = comm;
                 }
             }
         }
@@ -467,16 +446,26 @@ public:
         if (st.st_mtime == lastConfigMtime_) return;
         lastConfigMtime_ = st.st_mtime;
 
-        // Parse config.ini
-        std::ifstream file(cfgPath);
-        if (!file.is_open()) return;
+        // Parse config.ini via POSIX read to avoid C++ stream locale crashes
+        int fd = open(cfgPath.c_str(), O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return;
+        std::string content;
+        char readBuf[4096];
+        ssize_t nBytes;
+        while ((nBytes = read(fd, readBuf, sizeof(readBuf))) > 0) {
+            content.append(readBuf, nBytes);
+        }
+        close(fd);
 
-        std::string line;
         std::string currentGroup;
         std::vector<OverlayWidgetSpec> loadedWidgets;
         int widgetCount = 0;
 
-        while (std::getline(file, line)) {
+        size_t pos = 0;
+        while (pos < content.size()) {
+            size_t nextPos = content.find('\n', pos);
+            std::string line = (nextPos == std::string::npos) ? content.substr(pos) : content.substr(pos, nextPos - pos);
+            pos = (nextPos == std::string::npos) ? content.size() : nextPos + 1;
             // Trim leading whitespace
             size_t first = line.find_first_not_of(" \t\r\n");
             if (first == std::string::npos || line[first] == '#' || line[first] == ';') continue;

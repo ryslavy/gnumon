@@ -1,14 +1,14 @@
 #pragma once
 
 #include "../ipc/FrameRingBuffer.h"
-#include <string>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <chrono>
 #include <cstring>
+#include <cstdlib>
+#include <chrono>
 #include <algorithm>
-#include <dlfcn.h>
+#include <mutex>
+#include <fcntl.h>
+#include <unistd.h>
+#include <dirent.h>
 
 namespace gnumon::layer {
 
@@ -17,6 +17,7 @@ public:
     DirectSysfsTelemetry() = default;
 
     void Sample(ipc::TelemetrySnapshot& snap) {
+        std::lock_guard<std::mutex> lock(mutex_);
         auto now = std::chrono::steady_clock::now();
         if (lastSampleTime_.time_since_epoch().count() > 0) {
             auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSampleTime_).count();
@@ -34,20 +35,46 @@ public:
     }
 
 private:
-    static double ReadSysfsDouble(const std::filesystem::path& path, double divisor = 1.0) {
-        std::ifstream f(path);
-        if (!f.is_open()) return 0.0;
-        double val = 0.0;
-        f >> val;
-        return val / divisor;
+    static double ReadSysfsDouble(const char* path, double divisor = 1.0) {
+        if (!path || path[0] == '\0') return 0.0;
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return 0.0;
+        char buf[64]{};
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n <= 0) return 0.0;
+        buf[n] = '\0';
+        char* end = nullptr;
+        double val = strtod(buf, &end);
+        return (divisor > 0.0) ? (val / divisor) : val;
     }
 
-    static uint64_t ReadSysfsUint64(const std::filesystem::path& path) {
-        std::ifstream f(path);
-        if (!f.is_open()) return 0;
-        uint64_t val = 0;
-        f >> val;
-        return val;
+    static uint64_t ReadSysfsUint64(const char* path) {
+        if (!path || path[0] == '\0') return 0;
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return 0;
+        char buf[64]{};
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n <= 0) return 0;
+        buf[n] = '\0';
+        char* end = nullptr;
+        return strtoull(buf, &end, 10);
+    }
+
+    static bool ReadSysfsString(const char* path, char* out, size_t maxLen) {
+        if (!path || !out || maxLen == 0) return false;
+        out[0] = '\0';
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return false;
+        ssize_t n = read(fd, out, maxLen - 1);
+        close(fd);
+        if (n <= 0) return false;
+        out[n] = '\0';
+        while (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r' || out[n - 1] == ' ')) {
+            out[--n] = '\0';
+        }
+        return true;
     }
 
     void EnsureGpuPaths() {
@@ -55,37 +82,43 @@ private:
         gpuPathsInitialized_ = true;
 
         for (int i = 0; i < 8; ++i) {
-            auto dev = std::filesystem::path("/sys/class/drm") / ("card" + std::to_string(i)) / "device";
-            auto vendorPath = dev / "vendor";
-            std::ifstream vf(vendorPath);
-            if (!vf.is_open()) continue;
-            std::string vendor;
-            vf >> vendor;
+            char vpath[256];
+            snprintf(vpath, sizeof(vpath), "/sys/class/drm/card%d/device/vendor", i);
+            char vendor[32]{};
+            if (!ReadSysfsString(vpath, vendor, sizeof(vendor))) continue;
 
-            if (vendor == "0x1002") { // AMD
-                gpuCardPath_ = dev;
+            if (strcmp(vendor, "0x1002") == 0) { // AMD
+                snprintf(gpuCardPath_, sizeof(gpuCardPath_), "/sys/class/drm/card%d/device", i);
                 gpuVendor_ = 1;
-                auto hwmonDir = dev / "hwmon";
-                if (std::filesystem::exists(hwmonDir)) {
-                    for (const auto& entry : std::filesystem::directory_iterator(hwmonDir)) {
-                        if (entry.is_directory() && entry.path().filename().string().rfind("hwmon", 0) == 0) {
-                            gpuHwmonPath_ = entry.path();
+                char hwmonBase[256];
+                snprintf(hwmonBase, sizeof(hwmonBase), "%s/hwmon", gpuCardPath_);
+                DIR* dir = opendir(hwmonBase);
+                if (dir) {
+                    struct dirent* ent = nullptr;
+                    while ((ent = readdir(dir)) != nullptr) {
+                        if (strncmp(ent->d_name, "hwmon", 5) == 0) {
+                            snprintf(gpuHwmonPath_, sizeof(gpuHwmonPath_), "%s/%s", hwmonBase, ent->d_name);
                             break;
                         }
                     }
+                    closedir(dir);
                 }
                 break;
-            } else if (vendor == "0x8086") { // Intel
-                gpuCardPath_ = dev;
+            } else if (strcmp(vendor, "0x8086") == 0) { // Intel
+                snprintf(gpuCardPath_, sizeof(gpuCardPath_), "/sys/class/drm/card%d/device", i);
                 gpuVendor_ = 2;
-                auto hwmonDir = dev / "hwmon";
-                if (std::filesystem::exists(hwmonDir)) {
-                    for (const auto& entry : std::filesystem::directory_iterator(hwmonDir)) {
-                        if (entry.is_directory() && entry.path().filename().string().rfind("hwmon", 0) == 0) {
-                            gpuHwmonPath_ = entry.path();
+                char hwmonBase[256];
+                snprintf(hwmonBase, sizeof(hwmonBase), "%s/hwmon", gpuCardPath_);
+                DIR* dir = opendir(hwmonBase);
+                if (dir) {
+                    struct dirent* ent = nullptr;
+                    while ((ent = readdir(dir)) != nullptr) {
+                        if (strncmp(ent->d_name, "hwmon", 5) == 0) {
+                            snprintf(gpuHwmonPath_, sizeof(gpuHwmonPath_), "%s/%s", hwmonBase, ent->d_name);
                             break;
                         }
                     }
+                    closedir(dir);
                 }
                 break;
             }
@@ -97,72 +130,100 @@ private:
         cpuPathsInitialized_ = true;
 
         // CPU Name from /proc/cpuinfo
-        std::ifstream cpuinfo("/proc/cpuinfo");
-        if (cpuinfo.is_open()) {
-            std::string line;
-            while (std::getline(cpuinfo, line)) {
-                if (line.rfind("model name", 0) == 0) {
-                    auto pos = line.find(':');
-                    if (pos != std::string::npos && pos + 2 < line.size()) {
-                        cpuName_ = line.substr(pos + 2);
-                        break;
+        int fd = open("/proc/cpuinfo", O_RDONLY | O_CLOEXEC);
+        if (fd >= 0) {
+            char buf[2048]{};
+            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+            close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                char* pos = strstr(buf, "model name");
+                if (pos) {
+                    char* col = strchr(pos, ':');
+                    if (col) {
+                        col++;
+                        while (*col == ' ' || *col == '\t') col++;
+                        char* eol = strchr(col, '\n');
+                        if (eol) *eol = '\0';
+                        snprintf(cpuName_, sizeof(cpuName_), "%s", col);
                     }
                 }
             }
         }
-        if (cpuName_.empty()) cpuName_ = "Linux CPU";
+        if (cpuName_[0] == '\0') {
+            snprintf(cpuName_, sizeof(cpuName_), "Linux CPU");
+        }
 
         // CPU RAPL Powercap
-        std::filesystem::path raplPath = "/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj";
-        if (std::filesystem::exists(raplPath)) {
-            cpuRaplPath_ = raplPath;
+        const char* raplPath = "/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj";
+        if (access(raplPath, R_OK) == 0) {
+            snprintf(cpuRaplPath_, sizeof(cpuRaplPath_), "%s", raplPath);
             prevEnergyUj_ = ReadSysfsUint64(cpuRaplPath_);
             prevEnergyTime_ = std::chrono::steady_clock::now();
         }
 
         // CPU Temperature Hwmon
-        if (std::filesystem::exists("/sys/class/hwmon")) {
-            for (const auto& entry : std::filesystem::directory_iterator("/sys/class/hwmon")) {
-                auto namePath = entry.path() / "name";
-                std::ifstream nf(namePath);
-                if (nf.is_open()) {
-                    std::string name;
-                    nf >> name;
-                    if (name == "k10temp" || name == "coretemp" || name == "zenpower" || name == "cpu_thermal") {
-                        cpuHwmonPath_ = entry.path();
+        DIR* dir = opendir("/sys/class/hwmon");
+        if (dir) {
+            struct dirent* ent = nullptr;
+            while ((ent = readdir(dir)) != nullptr) {
+                if (ent->d_name[0] == '.') continue;
+                char namePath[256];
+                snprintf(namePath, sizeof(namePath), "/sys/class/hwmon/%s/name", ent->d_name);
+                char name[32]{};
+                if (ReadSysfsString(namePath, name, sizeof(name))) {
+                    if (strcmp(name, "k10temp") == 0 || strcmp(name, "coretemp") == 0 ||
+                        strcmp(name, "zenpower") == 0 || strcmp(name, "cpu_thermal") == 0) {
+                        snprintf(cpuHwmonPath_, sizeof(cpuHwmonPath_), "/sys/class/hwmon/%s", ent->d_name);
                         break;
                     }
                 }
             }
+            closedir(dir);
         }
     }
 
     void SampleGpu(ipc::TelemetrySnapshot& snap) {
         EnsureGpuPaths();
 
-        if (gpuVendor_ == 1 && !gpuCardPath_.empty()) { // AMD
-            snap.gpuUtil = static_cast<float>(ReadSysfsDouble(gpuCardPath_ / "gpu_busy_percent"));
-            uint64_t vramUsed = ReadSysfsUint64(gpuCardPath_ / "mem_info_vram_used");
-            uint64_t vramTotal = ReadSysfsUint64(gpuCardPath_ / "mem_info_vram_total");
+        if (gpuVendor_ == 1 && gpuCardPath_[0] != '\0') { // AMD
+            char path[512];
+            snprintf(path, sizeof(path), "%s/gpu_busy_percent", gpuCardPath_);
+            snap.gpuUtil = static_cast<float>(ReadSysfsDouble(path));
+
+            snprintf(path, sizeof(path), "%s/mem_info_vram_used", gpuCardPath_);
+            uint64_t vramUsed = ReadSysfsUint64(path);
+            snprintf(path, sizeof(path), "%s/mem_info_vram_total", gpuCardPath_);
+            uint64_t vramTotal = ReadSysfsUint64(path);
             snap.vramUsedGb = static_cast<float>(static_cast<double>(vramUsed) / (1024.0 * 1024.0 * 1024.0));
             snap.vramTotalGb = static_cast<float>(static_cast<double>(vramTotal) / (1024.0 * 1024.0 * 1024.0));
 
-            if (!gpuHwmonPath_.empty()) {
-                snap.gpuTemp = static_cast<float>(ReadSysfsDouble(gpuHwmonPath_ / "temp1_input", 1000.0));
-                double power = ReadSysfsDouble(gpuHwmonPath_ / "power1_average", 1'000'000.0);
+            if (gpuHwmonPath_[0] != '\0') {
+                snprintf(path, sizeof(path), "%s/temp1_input", gpuHwmonPath_);
+                snap.gpuTemp = static_cast<float>(ReadSysfsDouble(path, 1000.0));
+                snprintf(path, sizeof(path), "%s/power1_average", gpuHwmonPath_);
+                double power = ReadSysfsDouble(path, 1'000'000.0);
                 if (power <= 0.0) {
-                    power = ReadSysfsDouble(gpuHwmonPath_ / "power1_input", 1'000'000.0);
+                    snprintf(path, sizeof(path), "%s/power1_input", gpuHwmonPath_);
+                    power = ReadSysfsDouble(path, 1'000'000.0);
                 }
                 snap.gpuPower = static_cast<float>(power);
-                snap.gpuFreq = static_cast<float>(ReadSysfsDouble(gpuHwmonPath_ / "freq1_input", 1'000'000.0));
-                snap.gpuFanSpeed = static_cast<float>(ReadSysfsDouble(gpuHwmonPath_ / "fan1_input"));
-                snap.gpuVoltage = static_cast<float>(ReadSysfsDouble(gpuHwmonPath_ / "in0_input"));
+                snprintf(path, sizeof(path), "%s/freq1_input", gpuHwmonPath_);
+                snap.gpuFreq = static_cast<float>(ReadSysfsDouble(path, 1'000'000.0));
+                snprintf(path, sizeof(path), "%s/fan1_input", gpuHwmonPath_);
+                snap.gpuFanSpeed = static_cast<float>(ReadSysfsDouble(path));
+                snprintf(path, sizeof(path), "%s/in0_input", gpuHwmonPath_);
+                snap.gpuVoltage = static_cast<float>(ReadSysfsDouble(path));
             }
-        } else if (gpuVendor_ == 2 && !gpuCardPath_.empty()) { // Intel
-            if (!gpuHwmonPath_.empty()) {
-                snap.gpuTemp = static_cast<float>(ReadSysfsDouble(gpuHwmonPath_ / "temp1_input", 1000.0));
-                snap.gpuPower = static_cast<float>(ReadSysfsDouble(gpuHwmonPath_ / "power1_average", 1'000'000.0));
-                snap.gpuFreq = static_cast<float>(ReadSysfsDouble(gpuHwmonPath_ / "freq1_input", 1'000'000.0));
+        } else if (gpuVendor_ == 2 && gpuCardPath_[0] != '\0') { // Intel
+            if (gpuHwmonPath_[0] != '\0') {
+                char path[512];
+                snprintf(path, sizeof(path), "%s/temp1_input", gpuHwmonPath_);
+                snap.gpuTemp = static_cast<float>(ReadSysfsDouble(path, 1000.0));
+                snprintf(path, sizeof(path), "%s/power1_average", gpuHwmonPath_);
+                snap.gpuPower = static_cast<float>(ReadSysfsDouble(path, 1'000'000.0));
+                snprintf(path, sizeof(path), "%s/freq1_input", gpuHwmonPath_);
+                snap.gpuFreq = static_cast<float>(ReadSysfsDouble(path, 1'000'000.0));
             }
         }
     }
@@ -170,39 +231,45 @@ private:
     void SampleCpu(ipc::TelemetrySnapshot& snap) {
         EnsureCpuPaths();
 
-        if (snap.cpuName[0] == '\0' && !cpuName_.empty()) {
-            std::strncpy(snap.cpuName, cpuName_.c_str(), sizeof(snap.cpuName) - 1);
+        if (snap.cpuName[0] == '\0' && cpuName_[0] != '\0') {
+            snprintf(snap.cpuName, sizeof(snap.cpuName), "%s", cpuName_);
         }
 
         // CPU Utilization from /proc/stat
-        std::ifstream statFile("/proc/stat");
-        if (statFile.is_open()) {
-            std::string line;
-            if (std::getline(statFile, line) && line.rfind("cpu", 0) == 0) {
-                std::istringstream ss(line);
-                std::string label;
-                uint64_t u = 0, n = 0, s = 0, id = 0, io = 0, ir = 0, sir = 0, st = 0;
-                ss >> label >> u >> n >> s >> id >> io >> ir >> sir >> st;
-                uint64_t total = u + n + s + id + io + ir + sir + st;
-                uint64_t idle = id + io;
-                if (prevCpuTotal_ > 0 && total > prevCpuTotal_) {
-                    uint64_t totalDelta = total - prevCpuTotal_;
-                    uint64_t idleDelta = idle - prevCpuIdle_;
-                    if (totalDelta > 0) {
-                        float util = 100.0f * (1.0f - static_cast<float>(idleDelta) / static_cast<float>(totalDelta));
-                        snap.cpuUtil = std::clamp(util, 0.0f, 100.0f);
+        int fd = open("/proc/stat", O_RDONLY | O_CLOEXEC);
+        if (fd >= 0) {
+            char buf[512]{};
+            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+            close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                uint64_t u = 0, ni = 0, s = 0, id = 0, io = 0, ir = 0, sir = 0, st = 0;
+                if (sscanf(buf, "cpu %lu %lu %lu %lu %lu %lu %lu %lu",
+                           &u, &ni, &s, &id, &io, &ir, &sir, &st) >= 4) {
+                    uint64_t total = u + ni + s + id + io + ir + sir + st;
+                    uint64_t idle = id + io;
+                    if (prevCpuTotal_ > 0 && total > prevCpuTotal_) {
+                        uint64_t totalDelta = total - prevCpuTotal_;
+                        uint64_t idleDelta = idle - prevCpuIdle_;
+                        if (totalDelta > 0) {
+                            float util = 100.0f * (1.0f - static_cast<float>(idleDelta) / static_cast<float>(totalDelta));
+                            snap.cpuUtil = std::clamp(util, 0.0f, 100.0f);
+                        }
                     }
+                    prevCpuTotal_ = total;
+                    prevCpuIdle_ = idle;
                 }
-                prevCpuTotal_ = total;
-                prevCpuIdle_ = idle;
             }
         }
 
         // CPU Temp
-        if (!cpuHwmonPath_.empty()) {
-            double temp = ReadSysfsDouble(cpuHwmonPath_ / "temp1_input", 1000.0);
+        if (cpuHwmonPath_[0] != '\0') {
+            char path[512];
+            snprintf(path, sizeof(path), "%s/temp1_input", cpuHwmonPath_);
+            double temp = ReadSysfsDouble(path, 1000.0);
             if (temp <= 0.0) {
-                temp = ReadSysfsDouble(cpuHwmonPath_ / "temp2_input", 1000.0);
+                snprintf(path, sizeof(path), "%s/temp2_input", cpuHwmonPath_);
+                temp = ReadSysfsDouble(path, 1000.0);
             }
             if (temp > 0.0) {
                 snap.cpuTemp = static_cast<float>(temp);
@@ -210,7 +277,7 @@ private:
         }
 
         // CPU Power (RAPL)
-        if (!cpuRaplPath_.empty()) {
+        if (cpuRaplPath_[0] != '\0') {
             auto now = std::chrono::steady_clock::now();
             uint64_t curEnergyUj = ReadSysfsUint64(cpuRaplPath_);
             auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now - prevEnergyTime_).count();
@@ -223,23 +290,22 @@ private:
         }
 
         // CPU Frequency
-        std::ifstream freqFile("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq");
-        if (freqFile.is_open()) {
-            double khz = 0.0;
-            freqFile >> khz;
-            if (khz > 0.0) snap.cpuFreq = static_cast<float>(khz / 1000.0);
+        double khz = ReadSysfsDouble("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq");
+        if (khz > 0.0) {
+            snap.cpuFreq = static_cast<float>(khz / 1000.0);
         }
     }
 
+    std::mutex mutex_;
     bool gpuPathsInitialized_ = false;
-    int gpuVendor_ = 0; // 1 = AMD, 2 = Intel, 3 = NVIDIA
-    std::filesystem::path gpuCardPath_;
-    std::filesystem::path gpuHwmonPath_;
+    int gpuVendor_ = 0; // 1 = AMD, 2 = Intel
+    char gpuCardPath_[256]{};
+    char gpuHwmonPath_[256]{};
 
     bool cpuPathsInitialized_ = false;
-    std::string cpuName_;
-    std::filesystem::path cpuHwmonPath_;
-    std::filesystem::path cpuRaplPath_;
+    char cpuName_[128]{};
+    char cpuHwmonPath_[256]{};
+    char cpuRaplPath_[256]{};
     uint64_t prevCpuTotal_ = 0;
     uint64_t prevCpuIdle_ = 0;
     uint64_t prevEnergyUj_ = 0;

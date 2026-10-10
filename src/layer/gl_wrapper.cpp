@@ -35,6 +35,17 @@ struct GlFpsHistory {
 GlFpsHistory g_glFpsHistory;
 std::mutex g_glHudMutex;
 
+static std::string ReadSmallFile(const char* path) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return {};
+    char buf[4096];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return {};
+    buf[n] = '\0';
+    return std::string(buf, n);
+}
+
 static int GetConfiguredHudCorner() {
     const char* envCorner = getenv("GNUMON_CORNER");
     if (envCorner) {
@@ -46,18 +57,13 @@ static int GetConfiguredHudCorner() {
     }
     const char* home = getenv("HOME");
     if (home) {
-        std::string cfgPath = std::string(home) + "/.config/gnumon/config.ini";
-        std::ifstream file(cfgPath);
-        if (file.is_open()) {
-            std::string line;
-            while (std::getline(file, line)) {
-                if (line.rfind("inGameHudCorner", 0) == 0) {
-                    auto pos = line.find('=');
-                    if (pos != std::string::npos) {
-                        try { return std::stoi(line.substr(pos + 1)); } catch (...) {}
-                    }
-                }
-            }
+        char cfgPath[256];
+        snprintf(cfgPath, sizeof(cfgPath), "%s/.config/gnumon/config.ini", home);
+        std::string content = ReadSmallFile(cfgPath);
+        const char* p = strstr(content.c_str(), "inGameHudCorner");
+        if (p) {
+            const char* eq = strchr(p, '=');
+            if (eq) return atoi(eq + 1);
         }
     }
     return 0; // Top-Left default
@@ -70,18 +76,15 @@ static bool GetConfiguredHudDefault() {
     }
     const char* home = getenv("HOME");
     if (home) {
-        std::string cfgPath = std::string(home) + "/.config/gnumon/config.ini";
-        std::ifstream file(cfgPath);
-        if (file.is_open()) {
-            std::string line;
-            while (std::getline(file, line)) {
-                if (line.rfind("inGameHudEnabled", 0) == 0) {
-                    auto pos = line.find('=');
-                    if (pos != std::string::npos) {
-                        std::string val = line.substr(pos + 1);
-                        return (val == "true" || val == "1");
-                    }
-                }
+        char cfgPath[256];
+        snprintf(cfgPath, sizeof(cfgPath), "%s/.config/gnumon/config.ini", home);
+        std::string content = ReadSmallFile(cfgPath);
+        const char* p = strstr(content.c_str(), "inGameHudEnabled");
+        if (p) {
+            const char* eq = strchr(p, '=');
+            if (eq) {
+                while (*eq == '=' || *eq == ' ') eq++;
+                return (*eq == '1' || strncmp(eq, "true", 4) == 0);
             }
         }
     }
@@ -91,21 +94,17 @@ static bool GetConfiguredHudDefault() {
 static int GetConfiguredHudPreset() {
     const char* home = getenv("HOME");
     if (home) {
-        std::string cfgPath = std::string(home) + "/.config/gnumon/config.ini";
-        std::ifstream file(cfgPath);
-        if (file.is_open()) {
-            std::string line;
-            while (std::getline(file, line)) {
-                if (line.rfind("inGameHudPreset", 0) == 0 || line.rfind("selectedPreset", 0) == 0) {
-                    auto pos = line.find('=');
-                    if (pos != std::string::npos) {
-                        try {
-                            int p = std::stoi(line.substr(pos + 1));
-                            if (p >= 0 && p <= 2) return p;
-                            if (p == 3) return 2;
-                        } catch (...) {}
-                    }
-                }
+        char cfgPath[256];
+        snprintf(cfgPath, sizeof(cfgPath), "%s/.config/gnumon/config.ini", home);
+        std::string content = ReadSmallFile(cfgPath);
+        const char* p = strstr(content.c_str(), "inGameHudPreset");
+        if (!p) p = strstr(content.c_str(), "selectedPreset");
+        if (p) {
+            const char* eq = strchr(p, '=');
+            if (eq) {
+                int val = atoi(eq + 1);
+                if (val >= 0 && val <= 2) return val;
+                if (val == 3) return 2;
             }
         }
     }

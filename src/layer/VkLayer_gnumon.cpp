@@ -104,6 +104,17 @@ std::atomic<uint64_t> g_currentGpuSubmitStartNs{0};
 std::atomic<uint64_t> g_lastGpuSubmitEndNs{0};
 std::atomic<uint32_t> g_psoCompileCount{0};
 std::atomic<uint64_t> g_psoCompileDurationNs{0};
+static std::string ReadSmallFile(const char* path) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return {};
+    char buf[4096];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return {};
+    buf[n] = '\0';
+    return std::string(buf, n);
+}
+
 static int GetConfiguredHudCorner() {
     const char* envCorner = getenv("GNUMON_CORNER");
     if (envCorner) {
@@ -115,18 +126,13 @@ static int GetConfiguredHudCorner() {
     }
     const char* home = getenv("HOME");
     if (home) {
-        std::string cfgPath = std::string(home) + "/.config/gnumon/config.ini";
-        std::ifstream file(cfgPath);
-        if (file.is_open()) {
-            std::string line;
-            while (std::getline(file, line)) {
-                if (line.rfind("inGameHudCorner", 0) == 0) {
-                    auto pos = line.find('=');
-                    if (pos != std::string::npos) {
-                        try { return std::stoi(line.substr(pos + 1)); } catch (...) {}
-                    }
-                }
-            }
+        char cfgPath[256];
+        snprintf(cfgPath, sizeof(cfgPath), "%s/.config/gnumon/config.ini", home);
+        std::string content = ReadSmallFile(cfgPath);
+        const char* p = strstr(content.c_str(), "inGameHudCorner");
+        if (p) {
+            const char* eq = strchr(p, '=');
+            if (eq) return atoi(eq + 1);
         }
     }
     return 0; // Top-Left default
@@ -139,42 +145,35 @@ static bool GetConfiguredHudDefault() {
     }
     const char* home = getenv("HOME");
     if (home) {
-        std::string cfgPath = std::string(home) + "/.config/gnumon/config.ini";
-        std::ifstream file(cfgPath);
-        if (file.is_open()) {
-            std::string line;
-            while (std::getline(file, line)) {
-                if (line.rfind("inGameHudEnabled", 0) == 0) {
-                    auto pos = line.find('=');
-                    if (pos != std::string::npos) {
-                        std::string val = line.substr(pos + 1);
-                        return (val == "true" || val == "1");
-                    }
-                }
+        char cfgPath[256];
+        snprintf(cfgPath, sizeof(cfgPath), "%s/.config/gnumon/config.ini", home);
+        std::string content = ReadSmallFile(cfgPath);
+        const char* p = strstr(content.c_str(), "inGameHudEnabled");
+        if (p) {
+            const char* eq = strchr(p, '=');
+            if (eq) {
+                while (*eq == '=' || *eq == ' ') eq++;
+                return (*eq == '1' || strncmp(eq, "true", 4) == 0);
             }
         }
     }
-    return true; // Default enabled for in-game HUD (like OpenGL and GUI)
+    return true; // Default enabled for in-game HUD
 }
 
 static int GetConfiguredHudPreset() {
     const char* home = getenv("HOME");
     if (home) {
-        std::string cfgPath = std::string(home) + "/.config/gnumon/config.ini";
-        std::ifstream file(cfgPath);
-        if (file.is_open()) {
-            std::string line;
-            while (std::getline(file, line)) {
-                if (line.rfind("inGameHudPreset", 0) == 0 || line.rfind("selectedPreset", 0) == 0) {
-                    auto pos = line.find('=');
-                    if (pos != std::string::npos) {
-                        try {
-                            int p = std::stoi(line.substr(pos + 1));
-                            if (p >= 0 && p <= 2) return p;
-                            if (p == 3) return 2;
-                        } catch (...) {}
-                    }
-                }
+        char cfgPath[256];
+        snprintf(cfgPath, sizeof(cfgPath), "%s/.config/gnumon/config.ini", home);
+        std::string content = ReadSmallFile(cfgPath);
+        const char* p = strstr(content.c_str(), "inGameHudPreset");
+        if (!p) p = strstr(content.c_str(), "selectedPreset");
+        if (p) {
+            const char* eq = strchr(p, '=');
+            if (eq) {
+                int val = atoi(eq + 1);
+                if (val >= 0 && val <= 2) return val;
+                if (val == 3) return 2;
             }
         }
     }
@@ -202,12 +201,15 @@ static bool IsProcessBlacklisted() {
         return true;
     }
 
-    std::string comm;
-    std::ifstream commFile("/proc/self/comm");
-    if (commFile.is_open()) {
-        std::getline(commFile, comm);
-        while (!comm.empty() && (comm.back() == '\r' || comm.back() == '\n' || comm.back() == ' ')) {
-            comm.pop_back();
+    char commBuf[64]{};
+    int cfd = open("/proc/self/comm", O_RDONLY | O_CLOEXEC);
+    if (cfd >= 0) {
+        ssize_t n = read(cfd, commBuf, sizeof(commBuf) - 1);
+        close(cfd);
+        if (n > 0) {
+            while (n > 0 && (commBuf[n - 1] == '\r' || commBuf[n - 1] == '\n' || commBuf[n - 1] == ' ')) {
+                commBuf[--n] = '\0';
+            }
         }
     }
 
@@ -236,18 +238,21 @@ static bool IsProcessBlacklisted() {
     };
 
     for (const char* name : blacklistedNames) {
-        if (comm == name) {
+        if (strcmp(commBuf, name) == 0) {
             cachedResult = 1;
             return true;
         }
     }
 
-    std::ifstream cmdFile("/proc/self/cmdline");
-    if (cmdFile.is_open()) {
-        std::string cmd;
-        if (std::getline(cmdFile, cmd, '\0')) {
+    char cmdBuf[1024]{};
+    int cmdfd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+    if (cmdfd >= 0) {
+        ssize_t n = read(cmdfd, cmdBuf, sizeof(cmdBuf) - 1);
+        close(cmdfd);
+        if (n > 0) {
+            cmdBuf[n] = '\0';
             for (const char* name : blacklistedNames) {
-                if (cmd.find(name) != std::string::npos) {
+                if (strstr(cmdBuf, name) != nullptr) {
                     cachedResult = 1;
                     return true;
                 }
@@ -449,19 +454,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateDevice(
         disp.graphicsQueueFamilyIndex = gfxQFam;
         if (disp.getDeviceQueue) {
             disp.getDeviceQueue(*pDevice, gfxQFam, 0, &disp.graphicsQueue);
-        }
-        if (physicalDevice != VK_NULL_HANDLE) {
-            PFN_vkGetPhysicalDeviceProperties getProps = g_getPhysicalDeviceProperties;
-            if (!getProps) {
-#if !defined(_WIN32)
-                getProps = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(dlsym(RTLD_DEFAULT, "vkGetPhysicalDeviceProperties"));
-#endif
-            }
-            if (getProps) {
-                VkPhysicalDeviceProperties props{};
-                getProps(physicalDevice, &props);
-                g_overlayRenderer.SetGpuName(props.deviceName);
-            }
         }
         g_deviceDispatch[GetDispatchKey(*pDevice)] = disp;
     }
