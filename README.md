@@ -2,7 +2,7 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/ryslavy/gnumon?style=for-the-badge&color=00e5ff&logo=github)](https://github.com/ryslavy/gnumon/releases)
 [![Downloads](https://img.shields.io/github/downloads/ryslavy/gnumon/total?style=for-the-badge&color=7c4dff&logo=github)](https://github.com/ryslavy/gnumon/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=for-the-badge)](LICENSE)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg?style=for-the-badge&logo=linux)](https://github.com/ryslavy/gnumon)
 
 Linux-native port of Intel PresentMon providing real-time frame timing, GPU/CPU hardware telemetry, an in-game swapchain overlay with a frametime oscilloscope, and benchmark CSV capture for Vulkan and OpenGL applications.
