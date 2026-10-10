@@ -299,7 +299,7 @@ install(FILES README.md LICENSE
 set(CPACK_PACKAGE_NAME "gnumon")
 set(CPACK_PACKAGE_VENDOR "gnumon team")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Intel PresentMon port for Linux (Performance & Telemetry)")
-set(CPACK_PACKAGE_VERSION "0.1.0")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_CONTACT "https://github.com/ryslavy/gnumon")
 set(CPACK_GENERATOR "TGZ")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "gnumon team")
