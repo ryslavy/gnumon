@@ -343,50 +343,56 @@ public:
                         if (widgetCount > (int)loadedWidgets.size()) loadedWidgets.resize(widgetCount);
                     } catch (...) {}
                 } else if (key.rfind("w", 0) == 0) {
-                    // Format: w<i>_<property> or w<i>l<j>_<property>
-                    size_t us = key.find('_');
-                    if (us != std::string::npos) {
-                        std::string idxStr = key.substr(1, us - 1);
-                        std::string prop = key.substr(us + 1);
-                        size_t lPos = idxStr.find('l');
-                        if (lPos == std::string::npos) {
-                            // Widget level property: w<i>_<property>
+                    int wIdx = -1, lIdx = -1;
+                    char propBuf[64]{};
+                    bool isLineProp = false;
+                    bool isWidgetProp = false;
+
+                    // Match w%d_l%d_%s (e.g. w0_l0_metricId)
+                    if (sscanf(key.c_str(), "w%d_l%d_%63s", &wIdx, &lIdx, propBuf) == 3) {
+                        isLineProp = true;
+                    }
+                    // Match w%dl%d_%s (e.g. w0l0_metricId)
+                    else if (sscanf(key.c_str(), "w%dl%d_%63s", &wIdx, &lIdx, propBuf) == 3) {
+                        isLineProp = true;
+                    }
+                    // Match w%d_%s (e.g. w0_type, w0_rangeMin)
+                    else if (sscanf(key.c_str(), "w%d_%63s", &wIdx, propBuf) == 2) {
+                        isWidgetProp = true;
+                    }
+
+                    if (isWidgetProp && wIdx >= 0) {
+                        std::string prop(propBuf);
+                        if (wIdx >= (int)loadedWidgets.size()) loadedWidgets.resize(wIdx + 1);
+                        if (prop == "type") loadedWidgets[wIdx].isGraph = (val == "graph");
+                        else if (prop == "graphType") loadedWidgets[wIdx].isHistogram = (val == "histogram");
+                        else if (prop == "rangeMin") {
+                            try { loadedWidgets[wIdx].rangeMin = std::stof(val); } catch (...) {}
+                        } else if (prop == "rangeMax") {
+                            try { loadedWidgets[wIdx].rangeMax = std::stof(val); } catch (...) {}
+                        } else if (prop == "autoScale") loadedWidgets[wIdx].autoScale = (val == "true" || val == "1");
+                        else if (prop == "lineCount") {
                             try {
-                                int wIdx = std::stoi(idxStr);
-                                if (wIdx >= 0) {
-                                    if (wIdx >= (int)loadedWidgets.size()) loadedWidgets.resize(wIdx + 1);
-                                    if (prop == "type") loadedWidgets[wIdx].isGraph = (val == "graph");
-                                    else if (prop == "graphType") loadedWidgets[wIdx].isHistogram = (val == "histogram");
-                                    else if (prop == "rangeMin") loadedWidgets[wIdx].rangeMin = std::stof(val);
-                                    else if (prop == "rangeMax") loadedWidgets[wIdx].rangeMax = std::stof(val);
-                                    else if (prop == "autoScale") loadedWidgets[wIdx].autoScale = (val == "true" || val == "1");
-                                    else if (prop == "lineCount") {
-                                        int lc = std::stoi(val);
-                                        if (lc > (int)loadedWidgets[wIdx].lines.size()) loadedWidgets[wIdx].lines.resize(lc);
-                                    }
-                                }
+                                int lc = std::stoi(val);
+                                if (lc > (int)loadedWidgets[wIdx].lines.size()) loadedWidgets[wIdx].lines.resize(lc);
                             } catch (...) {}
-                        } else {
-                            // Line level property: w<i>l<j>_<property>
+                        }
+                    } else if (isLineProp && wIdx >= 0 && lIdx >= 0) {
+                        std::string prop(propBuf);
+                        if (wIdx >= (int)loadedWidgets.size()) loadedWidgets.resize(wIdx + 1);
+                        if (lIdx >= (int)loadedWidgets[wIdx].lines.size()) loadedWidgets[wIdx].lines.resize(lIdx + 1);
+                        auto& line = loadedWidgets[wIdx].lines[lIdx];
+                        if (prop == "metricId") {
                             try {
-                                int wIdx = std::stoi(idxStr.substr(0, lPos));
-                                int lIdx = std::stoi(idxStr.substr(lPos + 1));
-                                if (wIdx >= 0 && lIdx >= 0) {
-                                    if (wIdx >= (int)loadedWidgets.size()) loadedWidgets.resize(wIdx + 1);
-                                    if (lIdx >= (int)loadedWidgets[wIdx].lines.size()) loadedWidgets[wIdx].lines.resize(lIdx + 1);
-                                    auto& line = loadedWidgets[wIdx].lines[lIdx];
-                                    if (prop == "metricId") {
-                                        line.metricId = std::stoi(val);
-                                        PopulateMetricMetadata(line);
-                                    } else if (prop == "statId") {
-                                        line.statId = std::stoi(val);
-                                    } else if (prop == "lineColor") {
-                                        ParseColorHex(val, line.r, line.g, line.b, line.a);
-                                    } else if (prop == "fillColor") {
-                                        ParseColorHex(val, line.fillR, line.fillG, line.fillB, line.fillA);
-                                    }
-                                }
+                                line.metricId = std::stoi(val);
+                                PopulateMetricMetadata(line);
                             } catch (...) {}
+                        } else if (prop == "statId") {
+                            try { line.statId = std::stoi(val); } catch (...) {}
+                        } else if (prop == "lineColor") {
+                            ParseColorHex(val, line.r, line.g, line.b, line.a);
+                        } else if (prop == "fillColor") {
+                            ParseColorHex(val, line.fillR, line.fillG, line.fillB, line.fillA);
                         }
                     }
                 }
@@ -395,6 +401,12 @@ public:
 
         if (widgetCount > 0 && (int)loadedWidgets.size() > widgetCount) {
             loadedWidgets.resize(widgetCount);
+        }
+
+        for (auto& w : loadedWidgets) {
+            for (auto& line : w.lines) {
+                PopulateMetricMetadata(line);
+            }
         }
 
         bool hasValidWidgets = false;
@@ -721,8 +733,19 @@ public:
                 AddQuad(verts, padX, curY + 2.0f * uiScale, 8.0f * uiScale, 8.0f * uiScale, line.r, line.g, line.b, line.a);
 
                 // Label
-                const char* statName = (line.statId == 1) ? "(avg)" : (line.statId == 6) ? "(99%)" : (line.statId == 5) ? "(1%)" : (line.statId == 4) ? "(raw)" : "";
-                snprintf(buf, sizeof(buf), "%s %s", line.label.c_str(), statName);
+                const char* statName = "";
+                if (line.statId == 1) statName = "(avg)";
+                else if (line.statId == 2) statName = "(min)";
+                else if (line.statId == 3) statName = "(max)";
+                else if (line.statId == 4) statName = "(raw)";
+                else if (line.statId == 5) statName = "(1%)";
+                else if (line.statId == 6) statName = "(99%)";
+
+                if (statName[0] != '\0') {
+                    snprintf(buf, sizeof(buf), "%s %s", line.label.c_str(), statName);
+                } else {
+                    snprintf(buf, sizeof(buf), "%s", line.label.c_str());
+                }
                 AddString(verts, buf, padX + 14.0f * uiScale, curY, 0.75f * uiScale, 0.85f, 0.90f, 0.95f, 0.95f);
 
                 // Value + Units
@@ -745,8 +768,19 @@ public:
                     AddQuad(verts, padX, curY + 3.0f * uiScale, 8.0f * uiScale, 8.0f * uiScale, line.r, line.g, line.b, line.a);
 
                     // Metric label with stat (e.g. "Until Displayed (avg)")
-                    const char* statName = (line.statId == 1) ? "(avg)" : (line.statId == 6) ? "(99%)" : (line.statId == 5) ? "(1%)" : (line.statId == 4) ? "(raw)" : "";
-                    snprintf(buf, sizeof(buf), "%s %s", line.label.c_str(), statName);
+                    const char* statName = "";
+                    if (line.statId == 1) statName = "(avg)";
+                    else if (line.statId == 2) statName = "(min)";
+                    else if (line.statId == 3) statName = "(max)";
+                    else if (line.statId == 4) statName = "(raw)";
+                    else if (line.statId == 5) statName = "(1%)";
+                    else if (line.statId == 6) statName = "(99%)";
+
+                    if (statName[0] != '\0') {
+                        snprintf(buf, sizeof(buf), "%s %s", line.label.c_str(), statName);
+                    } else {
+                        snprintf(buf, sizeof(buf), "%s", line.label.c_str());
+                    }
                     AddString(verts, buf, padX + 14.0f * uiScale, curY, 0.76f * uiScale, 0.88f, 0.92f, 0.96f, 0.95f);
 
                     // Value + Units (e.g. "0.39 ms")

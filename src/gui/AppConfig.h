@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <gnumon/PresentMonAPI.h>
 #include <fstream>
 #include <string>
 
@@ -25,7 +26,7 @@ enum class GraphType {
 };
 
 struct LoadoutMetricItem {
-    int metricId = 12; // PM_METRIC id
+    int metricId = PM_METRIC_PRESENTED_FPS; // PM_METRIC id
     int statId = 1;   // 0: None/Raw, 1: Avg, 5: 1% Low, 6: 99% Low, 2: Min, 3: Max
     int deviceId = 0;
     QColor lineColor = QColor(100, 255, 255, 220);
@@ -54,7 +55,7 @@ struct LoadoutConfig {
             w.key = 0;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 3; // GPU Name
+            m.metricId = PM_METRIC_GPU_NAME;
             m.statId = 0;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -65,7 +66,7 @@ struct LoadoutConfig {
             w.key = 1;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 12; // FPS-Presents
+            m.metricId = PM_METRIC_PRESENTED_FPS;
             m.statId = 1;   // avg
             w.metrics.append(m);
             c.widgets.append(w);
@@ -76,7 +77,7 @@ struct LoadoutConfig {
             w.key = 2;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 12; // FPS-Presents
+            m.metricId = PM_METRIC_PRESENTED_FPS;
             m.statId = 5;   // 1% low
             w.metrics.append(m);
             c.widgets.append(w);
@@ -91,7 +92,7 @@ struct LoadoutConfig {
             w.rangeMax = 50.0f;
             w.autoScale = true;
             LoadoutMetricItem m;
-            m.metricId = 87; // FrameTime-Presents
+            m.metricId = PM_METRIC_PRESENTED_FRAME_TIME;
             m.statId = 1;
             m.lineColor = QColor(0, 229, 255);
             m.fillColor = QColor(0, 180, 216, 40);
@@ -114,14 +115,14 @@ struct LoadoutConfig {
             w.autoScale = true;
 
             LoadoutMetricItem mAvg;
-            mAvg.metricId = 139; // Until Displayed
+            mAvg.metricId = PM_METRIC_UNTIL_DISPLAYED;
             mAvg.statId = 1;     // avg
             mAvg.lineColor = QColor(0, 229, 255);
             mAvg.fillColor = QColor(0, 180, 216, 50);
             w.metrics.append(mAvg);
 
             LoadoutMetricItem mRaw;
-            mRaw.metricId = 139;
+            mRaw.metricId = PM_METRIC_UNTIL_DISPLAYED;
             mRaw.statId = 4;     // raw
             mRaw.lineColor = QColor(105, 240, 174);
             w.metrics.append(mRaw);
@@ -139,20 +140,20 @@ struct LoadoutConfig {
             w.autoScale = true;
 
             LoadoutMetricItem mAvg;
-            mAvg.metricId = 138; // Between Display Change
+            mAvg.metricId = PM_METRIC_BETWEEN_DISPLAY_CHANGE;
             mAvg.statId = 1;     // avg
             mAvg.lineColor = QColor(0, 229, 255);
             mAvg.fillColor = QColor(0, 180, 216, 60);
             w.metrics.append(mAvg);
 
             LoadoutMetricItem m99;
-            m99.metricId = 138;
+            m99.metricId = PM_METRIC_BETWEEN_DISPLAY_CHANGE;
             m99.statId = 6;     // 99%
             m99.lineColor = QColor(255, 82, 82);
             w.metrics.append(m99);
 
             LoadoutMetricItem mRaw;
-            mRaw.metricId = 138;
+            mRaw.metricId = PM_METRIC_BETWEEN_DISPLAY_CHANGE;
             mRaw.statId = 4;     // raw
             mRaw.lineColor = QColor(105, 240, 174);
             w.metrics.append(mRaw);
@@ -170,7 +171,7 @@ struct LoadoutConfig {
             w.autoScale = false;
 
             LoadoutMetricItem mAvg;
-            mAvg.metricId = 144; // Dropped Frames
+            mAvg.metricId = PM_METRIC_DROPPED_FRAMES;
             mAvg.statId = 1;     // avg
             mAvg.lineColor = QColor(0, 229, 255);
             w.metrics.append(mAvg);
@@ -183,7 +184,7 @@ struct LoadoutConfig {
             w.key = 3;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 12; // FPS
+            m.metricId = PM_METRIC_PRESENTED_FPS;
             m.statId = 1;    // avg
             w.metrics.append(m);
             c.widgets.append(w);
@@ -194,7 +195,7 @@ struct LoadoutConfig {
             w.key = 4;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 33; // GPU Util
+            m.metricId = PM_METRIC_GPU_UTILIZATION;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -205,7 +206,7 @@ struct LoadoutConfig {
             w.key = 5;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 34; // CPU Util
+            m.metricId = PM_METRIC_CPU_UTILIZATION;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -215,13 +216,13 @@ struct LoadoutConfig {
 
     static LoadoutConfig MakeGpuFocus() {
         LoadoutConfig c = MakeDefaultBasic();
-        // Add GPU Util, Power, Temp, VRAM
+        // Add GPU Util, Temp, Power
         {
             LoadoutWidget w;
             w.key = 4;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 33; // GPU Util
+            m.metricId = PM_METRIC_GPU_UTILIZATION;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -231,7 +232,7 @@ struct LoadoutConfig {
             w.key = 5;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 31; // GPU Temp
+            m.metricId = PM_METRIC_GPU_TEMPERATURE;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -241,7 +242,7 @@ struct LoadoutConfig {
             w.key = 6;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 28; // GPU Power
+            m.metricId = PM_METRIC_GPU_POWER;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -256,7 +257,7 @@ struct LoadoutConfig {
             w.key = 0;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 3; // GPU Name
+            m.metricId = PM_METRIC_GPU_NAME;
             m.statId = 0;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -266,7 +267,7 @@ struct LoadoutConfig {
             w.key = 1;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 12; // FPS
+            m.metricId = PM_METRIC_PRESENTED_FPS;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -276,7 +277,7 @@ struct LoadoutConfig {
             w.key = 2;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 28; // GPU Power
+            m.metricId = PM_METRIC_GPU_POWER;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -286,7 +287,7 @@ struct LoadoutConfig {
             w.key = 3;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 31; // GPU Temp
+            m.metricId = PM_METRIC_GPU_TEMPERATURE;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -296,7 +297,7 @@ struct LoadoutConfig {
             w.key = 4;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 89; // CPU Power
+            m.metricId = PM_METRIC_CPU_POWER;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);
@@ -306,7 +307,7 @@ struct LoadoutConfig {
             w.key = 5;
             w.widgetType = WidgetType::Readout;
             LoadoutMetricItem m;
-            m.metricId = 90; // CPU Temp
+            m.metricId = PM_METRIC_CPU_TEMPERATURE;
             m.statId = 1;
             w.metrics.append(m);
             c.widgets.append(w);

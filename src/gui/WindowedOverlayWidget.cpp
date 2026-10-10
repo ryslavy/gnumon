@@ -197,15 +197,53 @@ static QString GetMetricLabel(int metricId) {
         case PM_METRIC_PRESENTED_FPS: return "Presented FPS";
         case PM_METRIC_PRESENTED_FRAME_TIME: return "Presented Frame Time";
         case PM_METRIC_DISPLAYED_FRAME_TIME: return "Displayed Frame Time";
+        case PM_METRIC_BETWEEN_PRESENTS: return "Between Presents";
+        case PM_METRIC_IN_PRESENT_API: return "In Present API";
+        case PM_METRIC_ANIMATION_ERROR: return "Animation Error";
+        case PM_METRIC_ANIMATION_TIME: return "Animation Time";
+        case PM_METRIC_FLIP_DELAY: return "Flip Delay";
+        case PM_METRIC_SYNC_INTERVAL: return "Sync Interval";
+        case PM_METRIC_ALLOWS_TEARING: return "Allows Tearing";
+        case PM_METRIC_PRESENT_MODE: return "Present Mode";
+        case PM_METRIC_PRESENT_RUNTIME: return "Present Runtime";
+        case PM_METRIC_FRAME_TYPE: return "Frame Type";
+
+        case PM_METRIC_DISPLAY_LATENCY: return "Display Latency";
+        case PM_METRIC_CLICK_TO_PHOTON_LATENCY: return "Click to Photon Latency";
+        case PM_METRIC_ALL_INPUT_TO_PHOTON_LATENCY: return "All Input to Photon";
+        case PM_METRIC_INSTRUMENTED_LATENCY: return "Instrumented Latency";
+        case PM_METRIC_PC_LATENCY: return "PC Latency";
+        case PM_METRIC_GPU_LATENCY: return "GPU Latency";
+        case PM_METRIC_RENDER_PRESENT_LATENCY: return "Render Present Latency";
+
+        case PM_METRIC_GPU_TIME: return "GPU Time";
+        case PM_METRIC_GPU_BUSY: return "GPU Busy";
+        case PM_METRIC_GPU_WAIT: return "GPU Wait";
         case PM_METRIC_GPU_UTILIZATION: return "GPU Utilization";
         case PM_METRIC_GPU_POWER: return "GPU Power";
+        case PM_METRIC_GPU_CARD_POWER: return "GPU Card Power";
         case PM_METRIC_GPU_TEMPERATURE: return "GPU Temperature";
+        case PM_METRIC_GPU_VOLTAGE_REGULATOR_TEMPERATURE: return "GPU VRM Temp";
         case PM_METRIC_GPU_FREQUENCY: return "GPU Frequency";
+        case PM_METRIC_GPU_FAN_SPEED: return "GPU Fan Speed";
+        case PM_METRIC_GPU_NAME: return "GPU Name";
+        case PM_METRIC_GPU_VENDOR: return "GPU Vendor";
+
         case PM_METRIC_GPU_MEM_USED: return "GPU VRAM Used";
+        case PM_METRIC_GPU_MEM_SIZE: return "GPU VRAM Total Size";
+        case PM_METRIC_GPU_MEM_UTILIZATION: return "GPU VRAM Utilization";
+        case PM_METRIC_GPU_MEM_TEMPERATURE: return "GPU VRAM Temp";
+
         case PM_METRIC_CPU_UTILIZATION: return "CPU Utilization";
+        case PM_METRIC_CPU_BUSY: return "CPU Busy";
+        case PM_METRIC_CPU_WAIT: return "CPU Wait";
+        case PM_METRIC_CPU_FRAME_TIME: return "CPU Frame Time";
         case PM_METRIC_CPU_POWER: return "CPU Power";
         case PM_METRIC_CPU_TEMPERATURE: return "CPU Temperature";
+        case PM_METRIC_CPU_CORE_TEMPERATURE: return "CPU Core Temp";
         case PM_METRIC_CPU_FREQUENCY: return "CPU Frequency";
+        case PM_METRIC_CPU_NAME: return "CPU Name";
+        case PM_METRIC_CPU_VENDOR: return "CPU Vendor";
         default: return "Metric";
     }
 }
@@ -215,20 +253,52 @@ static QString GetMetricUnits(int metricId) {
         case PM_METRIC_BETWEEN_DISPLAY_CHANGE:
         case PM_METRIC_UNTIL_DISPLAYED:
         case PM_METRIC_PRESENTED_FRAME_TIME:
-        case PM_METRIC_DISPLAYED_FRAME_TIME: return "ms";
+        case PM_METRIC_DISPLAYED_FRAME_TIME:
+        case PM_METRIC_GPU_TIME:
+        case PM_METRIC_GPU_BUSY:
+        case PM_METRIC_GPU_WAIT:
+        case PM_METRIC_CPU_BUSY:
+        case PM_METRIC_CPU_WAIT:
+        case PM_METRIC_CPU_FRAME_TIME:
+        case PM_METRIC_DISPLAY_LATENCY:
+        case PM_METRIC_CLICK_TO_PHOTON_LATENCY:
+        case PM_METRIC_ALL_INPUT_TO_PHOTON_LATENCY:
+        case PM_METRIC_INSTRUMENTED_LATENCY:
+        case PM_METRIC_PC_LATENCY:
+        case PM_METRIC_GPU_LATENCY:
+        case PM_METRIC_RENDER_PRESENT_LATENCY:
+        case PM_METRIC_ANIMATION_ERROR:
+        case PM_METRIC_ANIMATION_TIME:
+        case PM_METRIC_FLIP_DELAY:
+            return "ms";
         case PM_METRIC_APPLICATION_FPS:
         case PM_METRIC_DISPLAYED_FPS:
-        case PM_METRIC_PRESENTED_FPS: return "FPS";
+        case PM_METRIC_PRESENTED_FPS:
+            return "FPS";
         case PM_METRIC_GPU_UTILIZATION:
-        case PM_METRIC_CPU_UTILIZATION: return "%";
+        case PM_METRIC_CPU_UTILIZATION:
+        case PM_METRIC_GPU_MEM_UTILIZATION:
+            return "%";
         case PM_METRIC_GPU_POWER:
-        case PM_METRIC_CPU_POWER: return "W";
+        case PM_METRIC_GPU_CARD_POWER:
+        case PM_METRIC_CPU_POWER:
+            return "W";
         case PM_METRIC_GPU_TEMPERATURE:
-        case PM_METRIC_CPU_TEMPERATURE: return "°C";
+        case PM_METRIC_GPU_VOLTAGE_REGULATOR_TEMPERATURE:
+        case PM_METRIC_GPU_MEM_TEMPERATURE:
+        case PM_METRIC_CPU_TEMPERATURE:
+        case PM_METRIC_CPU_CORE_TEMPERATURE:
+            return "°C";
         case PM_METRIC_GPU_FREQUENCY:
-        case PM_METRIC_CPU_FREQUENCY: return "MHz";
-        case PM_METRIC_GPU_MEM_USED: return "GB";
-        default: return "";
+        case PM_METRIC_CPU_FREQUENCY:
+            return "MHz";
+        case PM_METRIC_GPU_MEM_USED:
+        case PM_METRIC_GPU_MEM_SIZE:
+            return "GB";
+        case PM_METRIC_GPU_FAN_SPEED:
+            return "RPM";
+        default:
+            return "";
     }
 }
 
@@ -285,8 +355,16 @@ void WindowedOverlayWidget::paintEvent(QPaintEvent *) {
             p.drawRect(14, curY + 3, 8, 8);
 
             // Label
-            QString statName = (line.statId == 1) ? "(avg)" : (line.statId == 6) ? "(99%)" : (line.statId == 5) ? "(1%)" : (line.statId == 4) ? "(raw)" : "";
-            QString lbl = QString("%1 %2").arg(GetMetricLabel(line.metricId)).arg(statName);
+            QString statName = "";
+            if (line.statId == 1) statName = "(avg)";
+            else if (line.statId == 2) statName = "(min)";
+            else if (line.statId == 3) statName = "(max)";
+            else if (line.statId == 4) statName = "(raw)";
+            else if (line.statId == 5) statName = "(1%)";
+            else if (line.statId == 6) statName = "(99%)";
+
+            QString lbl = statName.isEmpty() ? GetMetricLabel(line.metricId)
+                                             : QString("%1 %2").arg(GetMetricLabel(line.metricId), statName);
             p.setPen(QColor(220, 225, 235));
             p.setFont(QFont("sans-serif", 9, QFont::Normal));
             p.drawText(28, curY + 12, lbl);
@@ -309,8 +387,16 @@ void WindowedOverlayWidget::paintEvent(QPaintEvent *) {
                 p.setBrush(line.lineColor);
                 p.drawRect(14, curY + 4, 8, 8);
 
-                QString statName = (line.statId == 1) ? "(avg)" : (line.statId == 6) ? "(99%)" : (line.statId == 5) ? "(1%)" : (line.statId == 4) ? "(raw)" : "";
-                QString lbl = QString("%1 %2").arg(GetMetricLabel(line.metricId)).arg(statName);
+                QString statName = "";
+                if (line.statId == 1) statName = "(avg)";
+                else if (line.statId == 2) statName = "(min)";
+                else if (line.statId == 3) statName = "(max)";
+                else if (line.statId == 4) statName = "(raw)";
+                else if (line.statId == 5) statName = "(1%)";
+                else if (line.statId == 6) statName = "(99%)";
+
+                QString lbl = statName.isEmpty() ? GetMetricLabel(line.metricId)
+                                                 : QString("%1 %2").arg(GetMetricLabel(line.metricId), statName);
                 p.setPen(QColor(220, 225, 235));
                 p.setFont(QFont("sans-serif", 8, QFont::Normal));
                 p.drawText(28, curY + 12, lbl);
