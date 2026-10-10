@@ -1,5 +1,10 @@
 # gnumon
 
+[![Latest Release](https://img.shields.io/github/v/release/ryslavy/gnumon?style=for-the-badge&color=00e5ff&logo=github)](https://github.com/ryslavy/gnumon/releases)
+[![Downloads](https://img.shields.io/github/downloads/ryslavy/gnumon/total?style=for-the-badge&color=7c4dff&logo=github)](https://github.com/ryslavy/gnumon/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg?style=for-the-badge&logo=linux)](https://github.com/ryslavy/gnumon)
+
 Linux-native port of Intel PresentMon providing real-time frame timing, GPU/CPU hardware telemetry, an in-game swapchain overlay with a frametime oscilloscope, and benchmark CSV capture for Vulkan and OpenGL applications.
 
 ## Overview
@@ -41,19 +46,19 @@ Linux-native port of Intel PresentMon providing real-time frame timing, GPU/CPU 
 ### 1. AppImage (Standalone / Portable)
 Works out-of-the-box on any modern Linux distribution without installation:
 ```bash
-chmod +x gnumon-0.1.0-x86_64.AppImage
-./gnumon-0.1.0-x86_64.AppImage
+chmod +x gnumon-0.2.0-x86_64.AppImage
+./gnumon-0.2.0-x86_64.AppImage
 ```
 
 ### 2. Debian / Ubuntu (.deb)
 ```bash
-sudo dpkg -i gnumon-0.1.0-Linux.deb
+sudo dpkg -i gnumon-0.2.0-Linux.deb
 ```
 
 ### 3. Tarball Archive (.tar.gz)
 ```bash
-tar -xzf gnumon-0.1.0-Linux.tar.gz
-cd gnumon-0.1.0-Linux
+tar -xzf gnumon-0.2.0-Linux.tar.gz
+cd gnumon-0.2.0-Linux
 ./scripts/install-layers.sh
 ```
 `install-layers.sh` registers the Vulkan layer for both native Steam and Flatpak Steam.
@@ -112,6 +117,10 @@ podman run --rm -v $(pwd):/workspace:Z -w /workspace/build-container gnumon-buil
 - `src/gui/`: Qt6 management application, live graph analyzer, and floating desktop HUD.
 - `src/cli/`: Command-line capture tool and telemetry monitor (`gnumon-cli`).
 - `src/daemon/`: Background telemetry coordinator service (`gnumond`).
+
+## Issues & Contributing
+
+If you encounter a bug, rendering issue, or have a feature request, please check our [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) guide and submit an issue via the [GitHub Issue Tracker](https://github.com/ryslavy/gnumon/issues).
 
 ## License
 

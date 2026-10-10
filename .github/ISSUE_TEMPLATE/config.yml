@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "Discussions & General Questions"
+    url: "https://github.com/ryslavy/gnumon/discussions"
+    about: "Ask questions, share benchmarking results, or discuss loadouts with the community."

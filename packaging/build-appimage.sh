@@ -182,7 +182,11 @@ APPRUN_EOF
 chmod +x "$APPDIR/AppRun"
 
 # 9. Build AppImage using appimagetool
-APPIMAGE_OUTPUT="${OUT_DIR}/gnumon-0.1.0-x86_64.AppImage"
+APP_VER=$(grep -m1 "project(gnumon VERSION" "${SCRIPT_DIR}/CMakeLists.txt" | sed -E 's/.*VERSION ([0-9.]+).*/\1/')
+if [ -z "$APP_VER" ]; then
+    APP_VER="0.2.0"
+fi
+APPIMAGE_OUTPUT="${OUT_DIR}/gnumon-${APP_VER}-x86_64.AppImage"
 echo "==> Generating AppImage: ${APPIMAGE_OUTPUT}..."
 rm -f "$APPIMAGE_OUTPUT"
 ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$APPIMAGE_OUTPUT"

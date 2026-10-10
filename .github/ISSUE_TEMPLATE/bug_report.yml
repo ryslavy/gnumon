@@ -1,0 +1,104 @@
+name: Bug Report
+description: Report an issue, malfunction, crash, or overlay rendering glitch
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue in **gnumon**!
+        Please fill out this form as completely as possible to help us diagnose and reproduce the problem quickly.
+
+  - type: textarea
+    id: problem-description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe what happened, e.g. "When launching DOOM Eternal via Proton, the overlay oscillates between 0 and 60 FPS or crashes immediately."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: app-type
+    attributes:
+      label: Application / Game Type
+      description: What kind of game or application were you running?
+      options:
+        - "Steam Native Linux Game (Vulkan)"
+        - "Steam Native Linux Game (OpenGL)"
+        - "Steam Proton / Wine 64-bit"
+        - "Steam Proton / Wine 32-bit (Legacy multilib)"
+        - "Flatpak Steam Game"
+        - "Heroic / Lutris / Bottles Game"
+        - "Standalone / Desktop application"
+        - "Other"
+    validations:
+      required: true
+
+  - type: input
+    id: game-name
+    attributes:
+      label: Game / Application Name
+      description: Exact name of the game or software tested.
+      placeholder: e.g. Cyberpunk 2077, Counter-Strike 2, vkcube
+    validations:
+      required: true
+
+  - type: textarea
+    id: system-info
+    attributes:
+      label: System & Hardware Information
+      description: Please share your Linux distribution, GPU, driver, and desktop environment (or paste output of `inxi -G` or `vulkaninfo --summary`).
+      placeholder: |
+        - OS / Distro: (e.g. CachyOS, Arch Linux, Fedora 40, Ubuntu 24.04)
+        - Kernel: (e.g. 6.11.2)
+        - Display Server & Compositor: (e.g. Wayland on KDE Plasma 6.2, X11 on GNOME 47, Gamescope)
+        - GPU: (e.g. AMD Radeon RX 7900 XTX, NVIDIA GeForce RTX 4080, Intel Arc A770)
+        - GPU Driver: (e.g. Mesa 24.2.4 RADV, NVIDIA 560.35.03)
+        - gnumon Version: 0.2.0 (AppImage / built from source)
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Start gnumond service or launch gnumon-gui
+        2. Launch game with 'gnumon-run %command%' or automatic Steam tracking
+        3. Press F9 (or Ctrl+Shift+O) to toggle overlay
+        4. Observe behavior...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: e.g. "The overlay should smoothly show frametime oscilloscope and hardware metrics without flickering or drops."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs-and-output
+    attributes:
+      label: Terminal Logs & Debug Output
+      description: |
+        Please paste the output of running the game with `GNUMON_DEBUG=1` or daemon logs:
+        `journalctl --user -u gnumond -n 100 --no-pager`
+      render: shell
+      placeholder: |
+        [gnumon-layer] In-game layer initialized successfully
+        [gnumond] Connected to ring buffer for PID 12345
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Screenshots or Additional Context
+      description: Drag and drop screenshots, photos of the overlay, or any extra context here.
+    validations:
+      required: false

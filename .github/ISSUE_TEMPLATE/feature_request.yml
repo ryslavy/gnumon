@@ -1,0 +1,43 @@
+name: Feature Request
+description: Suggest an idea, metric, hardware sensor support, or visual enhancement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a feature or improvement for **gnumon**!
+
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: Feature Description
+      description: A clear and concise description of what you want to happen.
+      placeholder: e.g. "Support fan speed curves in the OSD or add an option to customize the font size of the oscilloscope."
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation / Use Case
+      description: Why would this feature be useful to you or other users?
+      placeholder: Explain what problem this solves or how it enhances benchmarking/monitoring.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution or Technical Details
+      description: How do you envision this working? (Any preferred config keys, metrics, or APIs?)
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions or features you've considered.
+    validations:
+      required: false

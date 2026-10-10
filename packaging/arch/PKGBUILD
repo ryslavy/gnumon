@@ -1,6 +1,6 @@
 # Maintainer: gnumon team <https://github.com/gnumon/gnumon-linux>
 pkgname=gnumon-git
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Intel PresentMon port for Linux - Real-time Frame Timing, Telemetry and Overlay"
 arch=('x86_64')

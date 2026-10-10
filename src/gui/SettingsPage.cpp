@@ -710,7 +710,7 @@ QWidget* SettingsPage::CreateAboutPage() {
     // 1. Application
     addSection("Application", {
         {"Product", "gnumon (Intel® PresentMon Linux Port)"},
-        {"Product Version", "0.1.0"},
+        {"Product Version", "0.2.0"},
         {"API Version", "3.4.0"},
         {"Middleware API Version", "3.4.0 Linux"},
         {"Preferences Format", "1.1.0"},
