@@ -71,9 +71,19 @@ MainWindow::MainWindow(QWidget *parent)
     RefreshProcesses();
 
     UpdateStatusBar();
+
+    windowedOverlay_ = new WindowedOverlayWidget(&config_, nullptr);
+    connect(windowedOverlay_, &WindowedOverlayWidget::windowedClosed, this, &MainWindow::OnConfigChanged);
+    if (config_.overlayWindowedMode) {
+        windowedOverlay_->show();
+    }
 }
 
 MainWindow::~MainWindow() {
+    if (windowedOverlay_) {
+        delete windowedOverlay_;
+        windowedOverlay_ = nullptr;
+    }
     if (isRecording_) {
         OnToggleRecording();
     }
@@ -108,6 +118,8 @@ void MainWindow::SetupUi() {
     connect(mainView_, &MainViewWidget::editLoadoutRequested, this, &MainWindow::OnEditLoadout);
     connect(mainView_, &MainViewWidget::openCapturesRequested, this, &MainWindow::OnOpenCapturesFolder);
     connect(mainView_, &MainViewWidget::processChanged, this, &MainWindow::OnProcessChanged);
+    connect(mainView_, &MainViewWidget::toggleOverlayRequested, this, &MainWindow::OnToggleOverlay);
+    connect(mainView_, &MainViewWidget::toggleCaptureRequested, this, &MainWindow::OnToggleRecording);
     connect(mainView_, &MainViewWidget::configChanged, this, &MainWindow::OnConfigChanged);
 
     connect(settingsPage_, &SettingsPage::topRequested, this, &MainWindow::OnBackToMain);
@@ -178,6 +190,14 @@ void MainWindow::OnBackToMain() {
 
 void MainWindow::OnConfigChanged() {
     UpdateStatusBar();
+    if (windowedOverlay_) {
+        if (config_.overlayWindowedMode) {
+            windowedOverlay_->ReloadLayout();
+            windowedOverlay_->show();
+        } else {
+            windowedOverlay_->hide();
+        }
+    }
     if (pollTimer_ && config_.dataPollingRate > 0) {
         int interval = 1000 / config_.dataPollingRate;
         if (pollTimer_->interval() != interval) {
@@ -416,6 +436,34 @@ void MainWindow::OnPollTimer() {
             numFrames = BATCH_SIZE;
         }
         csvFile_.flush();
+    }
+
+    // 1. Sync In-Game and Engine recording/overlay state bi-directionally
+    if (session_) {
+        bool ringRec = false;
+        if (pmGetRecordingState(session_, &ringRec) == PM_STATUS_SUCCESS) {
+            if (ringRec != isRecording_) {
+                OnToggleRecording();
+            }
+        }
+        bool ringOverlay = inGameOverlayActive_;
+        if (pmGetInGameOverlayState(session_, &ringOverlay) == PM_STATUS_SUCCESS) {
+            if (ringOverlay != inGameOverlayActive_) {
+                inGameOverlayActive_ = ringOverlay;
+            }
+        }
+    }
+    if (mainView_) {
+        mainView_->SetRecordingActive(isRecording_);
+        mainView_->SetOverlayActive(inGameOverlayActive_);
+    }
+
+    // 2. Update Windowed Overlay if active
+    if (windowedOverlay_ && windowedOverlay_->isVisible() && session_) {
+        PM_FULL_TELEMETRY_SNAPSHOT snap{};
+        if (pmGetFullTelemetrySnapshot(session_, trackedPid_, &snap) == PM_STATUS_SUCCESS) {
+            windowedOverlay_->UpdateFromSnapshot(snap);
+        }
     }
 
     UpdateStatusBar();

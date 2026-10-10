@@ -95,13 +95,37 @@ void MainViewWidget::SetupUi() {
 
     // Row 3: Overlay Hotkey
     grid1->addWidget(CreateRowLabel("Overlay Hotkey", "Set hotkey to toggle overlay on/off"), 2, 0);
+    auto *ovBox = new QHBoxLayout();
+    ovBox->setSpacing(12);
     hpOverlay_ = new HotkeyPillWidget(config_->hotkeyOverlay, card1);
     connect(hpOverlay_, &HotkeyPillWidget::hotkeyChanged, this, [this](const QString& hk) {
         config_->hotkeyOverlay = hk;
         config_->Save();
         emit configChanged();
     });
-    grid1->addWidget(hpOverlay_, 2, 1, Qt::AlignLeft);
+    ovBox->addWidget(hpOverlay_);
+
+    btnToggleOverlayAction_ = new QPushButton("TOGGLE OVERLAY", card1);
+    btnToggleOverlayAction_->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #1f2538;"
+        "  color: #00e5ff;"
+        "  border: 1px solid #364468;"
+        "  border-radius: 4px;"
+        "  padding: 6px 14px;"
+        "  font-size: 11px;"
+        "  font-weight: bold;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #2b3450;"
+        "  border-color: #00e5ff;"
+        "}"
+    );
+    btnToggleOverlayAction_->setCursor(Qt::PointingHandCursor);
+    connect(btnToggleOverlayAction_, &QPushButton::clicked, this, &MainViewWidget::toggleOverlayRequested);
+    ovBox->addWidget(btnToggleOverlayAction_);
+    ovBox->addStretch();
+    grid1->addLayout(ovBox, 2, 1);
 
     layout->addWidget(card1);
 
@@ -235,13 +259,37 @@ void MainViewWidget::SetupUi() {
 
     // Row 2: Capture Hotkey
     grid3->addWidget(CreateRowLabel("Capture Hotkey", "Set hotkey for capture of per-frame performance data as CSV"), 1, 0);
+    auto *capBox = new QHBoxLayout();
+    capBox->setSpacing(12);
     hpCapture_ = new HotkeyPillWidget(config_->hotkeyCapture, card3);
     connect(hpCapture_, &HotkeyPillWidget::hotkeyChanged, this, [this](const QString& hk) {
         config_->hotkeyCapture = hk;
         config_->Save();
         emit configChanged();
     });
-    grid3->addWidget(hpCapture_, 1, 1, Qt::AlignLeft);
+    capBox->addWidget(hpCapture_);
+
+    btnToggleCaptureAction_ = new QPushButton("START CAPTURE", card3);
+    btnToggleCaptureAction_->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #2b1f24;"
+        "  color: #ff5252;"
+        "  border: 1px solid #5a323a;"
+        "  border-radius: 4px;"
+        "  padding: 6px 14px;"
+        "  font-size: 11px;"
+        "  font-weight: bold;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #3d2830;"
+        "  border-color: #ff5252;"
+        "}"
+    );
+    btnToggleCaptureAction_->setCursor(Qt::PointingHandCursor);
+    connect(btnToggleCaptureAction_, &QPushButton::clicked, this, &MainViewWidget::toggleCaptureRequested);
+    capBox->addWidget(btnToggleCaptureAction_);
+    capBox->addStretch();
+    grid3->addLayout(capBox, 1, 1);
 
     layout->addWidget(card3);
 
@@ -399,6 +447,49 @@ void MainViewWidget::OnProcessComboChanged(int index) {
         QString name = comboProcess_->currentText();
         emit processChanged(selectedPid_, name);
     }
+}
+
+void MainViewWidget::SetRecordingActive(bool active) {
+    if (!btnToggleCaptureAction_) return;
+    if (active) {
+        btnToggleCaptureAction_->setText("● STOP CAPTURE");
+        btnToggleCaptureAction_->setStyleSheet(
+            "QPushButton {"
+            "  background-color: #5c1818;"
+            "  color: #ffffff;"
+            "  border: 1px solid #ff5252;"
+            "  border-radius: 4px;"
+            "  padding: 6px 14px;"
+            "  font-size: 11px;"
+            "  font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: #7a2020;"
+            "}"
+        );
+    } else {
+        btnToggleCaptureAction_->setText("START CAPTURE");
+        btnToggleCaptureAction_->setStyleSheet(
+            "QPushButton {"
+            "  background-color: #2b1f24;"
+            "  color: #ff5252;"
+            "  border: 1px solid #5a323a;"
+            "  border-radius: 4px;"
+            "  padding: 6px 14px;"
+            "  font-size: 11px;"
+            "  font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: #3d2830;"
+            "  border-color: #ff5252;"
+            "}"
+        );
+    }
+}
+
+void MainViewWidget::SetOverlayActive(bool active) {
+    if (!btnToggleOverlayAction_) return;
+    btnToggleOverlayAction_->setText(active ? "HIDE OVERLAY" : "SHOW OVERLAY");
 }
 
 } // namespace gnumon::gui

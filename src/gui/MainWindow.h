@@ -14,6 +14,7 @@
 #include "MainViewWidget.h"
 #include "SettingsPage.h"
 #include "LoadoutConfigPage.h"
+#include "WindowedOverlayWidget.h"
 
 namespace gnumon::gui {
 
@@ -70,6 +71,7 @@ private:
     MainViewWidget *mainView_ = nullptr;
     SettingsPage *settingsPage_ = nullptr;
     LoadoutConfigPage *loadoutPage_ = nullptr;
+    WindowedOverlayWidget *windowedOverlay_ = nullptr;
 
     // Bottom Status Bar
     QWidget *statusBarWidget_ = nullptr;

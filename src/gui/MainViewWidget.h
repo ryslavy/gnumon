@@ -21,12 +21,16 @@ public:
     void SetProcessList(const QStringList& processes, const QVector<uint32_t>& pids);
     uint32_t selectedPid() const { return selectedPid_; }
     void setSelectedPid(uint32_t pid);
+    void SetRecordingActive(bool active);
+    void SetOverlayActive(bool active);
 
 signals:
     void processChanged(uint32_t pid, const QString& name);
     void editLoadoutRequested();
     void settingsRequested();
     void openCapturesRequested();
+    void toggleOverlayRequested();
+    void toggleCaptureRequested();
     void configChanged();
 
 private slots:
@@ -55,6 +59,8 @@ private:
 
     QPushButton *btnOpenExplorer_ = nullptr;
     QPushButton *btnSettingsLink_ = nullptr;
+    QPushButton *btnToggleOverlayAction_ = nullptr;
+    QPushButton *btnToggleCaptureAction_ = nullptr;
 };
 
 } // namespace gnumon::gui

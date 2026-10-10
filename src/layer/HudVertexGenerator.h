@@ -321,7 +321,11 @@ public:
             val.erase(0, val.find_first_not_of(" \t\r\n"));
             val.erase(val.find_last_not_of(" \t\r\n") + 1);
 
-            if (currentGroup == "Overlay") {
+            if (currentGroup == "Hotkeys") {
+                if (key == "overlay") hotkeyOverlay_ = val;
+                else if (key == "presetCycle") hotkeyPresetCycle_ = val;
+                else if (key == "capture") hotkeyCapture_ = val;
+            } else if (currentGroup == "Overlay") {
                 if (key == "inGameHudCorner") {
                     try { configuredCorner_ = std::stoi(val); } catch (...) {}
                 } else if (key == "width") {
@@ -881,6 +885,15 @@ protected:
     std::string toastTitle_;
     std::string toastMessage_;
     uint64_t toastExpiryNs_ = 0;
+
+    std::string hotkeyOverlay_ = "Ctrl+Shift+O";
+    std::string hotkeyPresetCycle_ = "Ctrl+Shift+P";
+    std::string hotkeyCapture_ = "Ctrl+Shift+K";
+
+public:
+    std::string GetHotkeyOverlay() const { return hotkeyOverlay_; }
+    std::string GetHotkeyPresetCycle() const { return hotkeyPresetCycle_; }
+    std::string GetHotkeyCapture() const { return hotkeyCapture_; }
 };
 
 } // namespace gnumon::layer

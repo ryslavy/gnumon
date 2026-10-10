@@ -6,6 +6,7 @@
 #include "../ipc/FrameRingBuffer.h"
 #include "../common/Clock.h"
 #include "VulkanOverlayRenderer.h"
+#include "InGameHotkeyManager.h"
 
 #include <unordered_map>
 #include <mutex>
@@ -784,152 +785,40 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueueSubmit2(
 }
 #endif
 
+static gnumon::layer::InGameHotkeyManager g_hotkeyManager;
+
 static void CheckInGameHotkeys(uint64_t nowNs) {
-    static uint64_t lastCheckNs = 0;
-    if (nowNs < lastCheckNs + 33'000'000) {
-        return; // Check at most once every 33 ms (~30 Hz)
-    }
-    lastCheckNs = nowNs;
+    g_hotkeyManager.UpdateChords(g_overlayRenderer.GetHotkeyOverlay(),
+                                g_overlayRenderer.GetHotkeyPresetCycle(),
+                                g_overlayRenderer.GetHotkeyCapture());
 
-    // 1. Evdev hardware input polling (works globally: Wayland, Gamescope, Fullscreen)
-    static std::vector<int> evdevFds;
-    static bool evdevScanned = false;
-    if (!evdevScanned) {
-        evdevScanned = true;
-        DIR* dir = opendir("/dev/input");
-        if (dir) {
-            struct dirent* ent;
-            while ((ent = readdir(dir)) != nullptr) {
-                if (strncmp(ent->d_name, "event", 5) == 0) {
-                    std::string path = std::string("/dev/input/") + ent->d_name;
-                    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-                    if (fd >= 0) {
-                        evdevFds.push_back(fd);
-                    }
-                }
-            }
-            closedir(dir);
-        }
-    }
-    for (int efd : evdevFds) {
-        struct input_event iev[8];
-        ssize_t n = read(efd, iev, sizeof(iev));
-        if (n > 0) {
-            size_t count = n / sizeof(struct input_event);
-            for (size_t i = 0; i < count; ++i) {
-                if (iev[i].type == EV_KEY && iev[i].value == 1) {
-                    if (iev[i].code == 66 /* KEY_F8 */) {
-                        int nextPreset = (g_overlayRenderer.GetPreset() + 1) % 3;
-                        g_overlayRenderer.SetPreset(nextPreset);
-                        const char* presetNames[] = {"Compact", "Standard (Oscilloscope)", "Detailed"};
-                        g_overlayRenderer.TriggerToast("Preset Changed", presetNames[nextPreset], 2.5f);
-                    } else if (iev[i].code == 67 /* KEY_F9 */) {
-                        g_enableOverlay = !g_enableOverlay;
-                        g_producer.SetOverlayEnabled(g_enableOverlay);
-                        g_overlayRenderer.TriggerToast("In-Game Overlay", g_enableOverlay ? "ENABLED" : "DISABLED", 2.0f);
-                        if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
-                            fprintf(stderr, "[gnumon-layer] Evdev hotkey F9 pressed! In-Game HUD: %s\n",
-                                    g_enableOverlay ? "ON" : "OFF");
-                        }
-                    } else if (iev[i].code == 68 /* KEY_F10 */) {
-                        bool newRec = !g_producer.IsRecordingActive();
-                        g_producer.SetRecordingActive(newRec);
-                        g_overlayRenderer.TriggerToast(newRec ? "Benchmark Capture" : "Capture Saved",
-                                                       newRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
-                        if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
-                            fprintf(stderr, "[gnumon-layer] Evdev hotkey F10 pressed! Capture: %s\n",
-                                    newRec ? "STARTING" : "STOPPED");
-                        }
-                    }
-                }
-            }
-        }
-    }
+    auto ev = g_hotkeyManager.Poll(nowNs);
 
-    // 2. X11 / Xwayland fallback
-    typedef void* (*XOpenDisplay_fn)(const char*);
-    typedef int (*XQueryKeymap_fn)(void*, char[32]);
-    typedef unsigned char (*XKeysymToKeycode_fn)(void*, unsigned long);
-
-    static void* x11Lib = nullptr;
-    static XOpenDisplay_fn pXOpenDisplay = nullptr;
-    static XQueryKeymap_fn pXQueryKeymap = nullptr;
-    static XKeysymToKeycode_fn pXKeysymToKeycode = nullptr;
-    static void* dpy = nullptr;
-    static uint8_t kcF8 = 0;
-    static uint8_t kcF9 = 0;
-    static uint8_t kcF10 = 0;
-    static uint64_t lastDpyTryNs = 0;
-
-    if (!dpy && (nowNs - lastDpyTryNs > 1'000'000'000ULL)) {
-        lastDpyTryNs = nowNs;
-#if !defined(_WIN32)
-        if (!x11Lib) {
-            x11Lib = dlopen("libX11.so.6", RTLD_LAZY);
-            if (!x11Lib) x11Lib = dlopen("libX11.so", RTLD_LAZY);
-            if (x11Lib) {
-                pXOpenDisplay = (XOpenDisplay_fn)dlsym(x11Lib, "XOpenDisplay");
-                pXQueryKeymap = (XQueryKeymap_fn)dlsym(x11Lib, "XQueryKeymap");
-                pXKeysymToKeycode = (XKeysymToKeycode_fn)dlsym(x11Lib, "XKeysymToKeycode");
-            }
-        }
-        if (pXOpenDisplay) {
-            dpy = pXOpenDisplay(nullptr);
-            if (dpy && pXKeysymToKeycode) {
-                kcF8 = pXKeysymToKeycode(dpy, 0xffc5 /* XK_F8 */);
-                kcF9 = pXKeysymToKeycode(dpy, 0xffc6 /* XK_F9 */);
-                kcF10 = pXKeysymToKeycode(dpy, 0xffc7 /* XK_F10 */);
-            }
-        }
-#endif
-    }
-
-    if (!dpy || !pXQueryKeymap) return;
-
-    char keys[32]{};
-    pXQueryKeymap(dpy, keys);
-
-    auto isDown = [&](uint8_t kc) -> bool {
-        if (kc == 0) return false;
-        return (keys[kc / 8] & (1 << (kc % 8))) != 0;
-    };
-
-    static bool wasF8 = false;
-    bool downF8 = isDown(kcF8);
-    if (downF8 && !wasF8) {
+    if (ev.cyclePreset) {
         int nextPreset = (g_overlayRenderer.GetPreset() + 1) % 3;
         g_overlayRenderer.SetPreset(nextPreset);
         const char* presetNames[] = {"Compact", "Standard (Oscilloscope)", "Detailed"};
         g_overlayRenderer.TriggerToast("Preset Changed", presetNames[nextPreset], 2.5f);
     }
-    wasF8 = downF8;
-
-    static bool wasF9 = false;
-    bool downF9 = isDown(kcF9);
-    if (downF9 && !wasF9) {
+    if (ev.toggleOverlay) {
         g_enableOverlay = !g_enableOverlay;
         g_producer.SetOverlayEnabled(g_enableOverlay);
         g_overlayRenderer.TriggerToast("In-Game Overlay", g_enableOverlay ? "ENABLED" : "DISABLED", 2.0f);
         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
-            fprintf(stderr, "[gnumon-layer] In-game hotkey F9 pressed! In-Game HUD: %s\n",
+            fprintf(stderr, "[gnumon-layer] In-game hotkey pressed! In-Game HUD: %s\n",
                     g_enableOverlay ? "ON" : "OFF");
         }
     }
-    wasF9 = downF9;
-
-    static bool wasF10 = false;
-    bool downF10 = isDown(kcF10);
-    if (downF10 && !wasF10) {
+    if (ev.toggleCapture) {
         bool newRec = !g_producer.IsRecordingActive();
         g_producer.SetRecordingActive(newRec);
         g_overlayRenderer.TriggerToast(newRec ? "Benchmark Capture" : "Capture Saved",
                                        newRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
-            fprintf(stderr, "[gnumon-layer] In-game hotkey F10 pressed! Capture: %s\n",
+            fprintf(stderr, "[gnumon-layer] In-game hotkey pressed! Capture: %s\n",
                     newRec ? "STARTING" : "STOPPED");
         }
     }
-    wasF10 = downF10;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(

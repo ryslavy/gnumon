@@ -59,6 +59,7 @@ private:
     QVector<QPushButton*> navButtons_;
 
     // Overlay controls
+    ToggleSwitch *swWindowed_ = nullptr;
     ToggleSwitch *swAutoDuringCapture_ = nullptr;
     QuadrantPositioner *quadrantPos_ = nullptr;
     QSlider *sliderWidth_ = nullptr;

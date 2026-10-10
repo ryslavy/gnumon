@@ -1,0 +1,443 @@
+#include "WindowedOverlayWidget.h"
+#include <QPainterPath>
+#include <QFontDatabase>
+#include <cmath>
+#include <algorithm>
+#include "../../include/gnumon/PresentMonAPI.h"
+
+namespace gnumon::gui {
+
+WindowedOverlayWidget::WindowedOverlayWidget(AppConfig *config, QWidget *parent)
+    : QWidget(parent, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
+      config_(config)
+{
+    setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_ShowWithoutActivating);
+    setWindowTitle("gnumon Overlay (Windowed)");
+
+    ReloadLayout();
+}
+
+void WindowedOverlayWidget::ReloadLayout() {
+    int w = (config_->overlayWidth >= 250) ? config_->overlayWidth : 440;
+
+    int totalH = 36; // Header
+    for (const auto& widget : config_->loadout.widgets) {
+        if (widget.widgetType == WidgetType::Graph) {
+            totalH += (widget.metrics.size() * 18) + 76 + 24;
+        } else {
+            totalH += 24;
+        }
+    }
+    totalH += 12;
+
+    resize(w, totalH);
+    update();
+}
+
+void WindowedOverlayWidget::PushSample(std::deque<float>& q, float val, size_t maxLen) {
+    q.push_back(val);
+    if (q.size() > maxLen) {
+        q.pop_front();
+    }
+}
+
+void WindowedOverlayWidget::UpdateMetrics(double fps, double displayedFps, double frameTimeMs, double untilDisplayedMs,
+                                          double dropped, double animErrorMs, const ipc::TelemetrySnapshot* telem)
+{
+    if (frameTimeMs > 0.0) {
+        PushSample(frametimes_, static_cast<float>(frameTimeMs));
+    }
+    PushSample(histUntilDisplayed_, static_cast<float>(untilDisplayedMs));
+    PushSample(histFps_, static_cast<float>(displayedFps > 0.0 ? displayedFps : fps));
+    PushSample(histAnimError_, static_cast<float>(animErrorMs));
+    PushSample(histDroppedFrames_, static_cast<float>(dropped));
+
+    if (telem && telem->valid != 0) {
+        PushSample(histGpuUtil_, telem->gpuUtil);
+        PushSample(histGpuPower_, telem->gpuPower);
+        PushSample(histGpuTemp_, telem->gpuTemp);
+        PushSample(histGpuFreq_, telem->gpuFreq);
+        PushSample(histVramUsed_, telem->vramUsedGb);
+        PushSample(histCpuUtil_, telem->cpuUtil);
+        PushSample(histCpuPower_, telem->cpuPower);
+        PushSample(histCpuTemp_, telem->cpuTemp);
+        PushSample(histCpuFreq_, telem->cpuFreq);
+    }
+
+    update();
+}
+
+void WindowedOverlayWidget::UpdateFromSnapshot(const PM_FULL_TELEMETRY_SNAPSHOT& snap) {
+    if (snap.presentedFrameTimeMs > 0.0) {
+        PushSample(frametimes_, static_cast<float>(snap.presentedFrameTimeMs));
+    } else if (snap.presentFps > 0.0) {
+        PushSample(frametimes_, static_cast<float>(1000.0 / snap.presentFps));
+    }
+    PushSample(histUntilDisplayed_, static_cast<float>(snap.untilDisplayedMs));
+    PushSample(histFps_, static_cast<float>(snap.displayedFps > 0.0 ? snap.displayedFps : snap.presentFps));
+    PushSample(histAnimError_, static_cast<float>(snap.animationErrorMs));
+    PushSample(histDroppedFrames_, static_cast<float>(snap.droppedFrames));
+
+    PushSample(histGpuUtil_, static_cast<float>(snap.gpuUtilizationPercent));
+    PushSample(histGpuPower_, static_cast<float>(snap.gpuPowerWatts));
+    PushSample(histGpuTemp_, static_cast<float>(snap.gpuTemperatureEdgeC));
+    PushSample(histGpuFreq_, static_cast<float>(snap.gpuFrequencyMhz));
+    PushSample(histVramUsed_, static_cast<float>(snap.vramUsedBytes / (1024.0 * 1024.0 * 1024.0)));
+    PushSample(histCpuUtil_, static_cast<float>(snap.cpuUtilizationPercent));
+    PushSample(histCpuPower_, static_cast<float>(snap.cpuPackagePowerWatts));
+    PushSample(histCpuTemp_, static_cast<float>(snap.cpuTemperatureC));
+    PushSample(histCpuFreq_, static_cast<float>(snap.cpuFrequencyMhz));
+
+    update();
+}
+
+const std::deque<float>& WindowedOverlayWidget::GetHistoryForMetric(int metricId) {
+    switch (metricId) {
+        case PM_METRIC_BETWEEN_DISPLAY_CHANGE:
+        case PM_METRIC_DISPLAYED_FRAME_TIME:
+        case PM_METRIC_PRESENTED_FRAME_TIME:
+        case PM_METRIC_BETWEEN_PRESENTS:
+        case PM_METRIC_BETWEEN_APP_START:
+        case PM_METRIC_BETWEEN_SIMULATION_START:
+        case PM_METRIC_CPU_FRAME_TIME:
+        case PM_METRIC_IN_PRESENT_API:
+        case PM_METRIC_FLIP_DELAY:
+            return frametimes_;
+        case PM_METRIC_UNTIL_DISPLAYED:
+        case PM_METRIC_DISPLAY_LATENCY:
+        case PM_METRIC_CLICK_TO_PHOTON_LATENCY:
+        case PM_METRIC_ALL_INPUT_TO_PHOTON_LATENCY:
+        case PM_METRIC_INSTRUMENTED_LATENCY:
+        case PM_METRIC_PC_LATENCY:
+        case PM_METRIC_GPU_LATENCY:
+        case PM_METRIC_RENDER_PRESENT_LATENCY:
+            return histUntilDisplayed_;
+        case PM_METRIC_DROPPED_FRAMES:
+            return histDroppedFrames_;
+        case PM_METRIC_APPLICATION_FPS:
+        case PM_METRIC_DISPLAYED_FPS:
+        case PM_METRIC_PRESENTED_FPS:
+            return histFps_;
+        case PM_METRIC_ANIMATION_ERROR:
+        case PM_METRIC_ANIMATION_TIME:
+            return histAnimError_;
+        case PM_METRIC_GPU_UTILIZATION:
+        case PM_METRIC_GPU_RENDER_COMPUTE_UTILIZATION:
+        case PM_METRIC_GPU_MEDIA_UTILIZATION:
+            return histGpuUtil_;
+        case PM_METRIC_GPU_POWER:
+        case PM_METRIC_GPU_CARD_POWER:
+        case PM_METRIC_GPU_SUSTAINED_POWER_LIMIT:
+            return histGpuPower_;
+        case PM_METRIC_GPU_TEMPERATURE:
+        case PM_METRIC_GPU_VOLTAGE_REGULATOR_TEMPERATURE:
+            return histGpuTemp_;
+        case PM_METRIC_GPU_FREQUENCY:
+        case PM_METRIC_GPU_EFFECTIVE_FREQUENCY:
+            return histGpuFreq_;
+        case PM_METRIC_GPU_MEM_USED:
+        case PM_METRIC_GPU_MEM_SIZE:
+        case PM_METRIC_GPU_MEM_UTILIZATION:
+            return histVramUsed_;
+        case PM_METRIC_CPU_UTILIZATION:
+        case PM_METRIC_CPU_CORE_UTILITY:
+            return histCpuUtil_;
+        case PM_METRIC_CPU_POWER:
+        case PM_METRIC_CPU_POWER_LIMIT:
+            return histCpuPower_;
+        case PM_METRIC_CPU_TEMPERATURE:
+        case PM_METRIC_CPU_CORE_TEMPERATURE:
+            return histCpuTemp_;
+        case PM_METRIC_CPU_FREQUENCY:
+            return histCpuFreq_;
+        default:
+            return frametimes_;
+    }
+}
+
+float WindowedOverlayWidget::CalculateStat(const std::deque<float>& q, int statId) {
+    if (q.empty()) return 0.0f;
+    if (statId == 4 || statId == 0) return q.back(); // Raw
+    if (statId == 1) { // Avg
+        double sum = 0.0;
+        for (float v : q) sum += v;
+        return static_cast<float>(sum / q.size());
+    }
+    if (statId == 2) { // Min
+        float m = q.front();
+        for (float v : q) if (v < m) m = v;
+        return m;
+    }
+    if (statId == 3) { // Max
+        float m = q.front();
+        for (float v : q) if (v > m) m = v;
+        return m;
+    }
+    if (statId == 6 || statId == 5) { // 99% / 1%
+        std::vector<float> sorted(q.begin(), q.end());
+        std::sort(sorted.begin(), sorted.end());
+        double pct = (statId == 6) ? 0.99 : 0.01;
+        size_t idx = static_cast<size_t>(std::floor(sorted.size() * pct));
+        return sorted[std::min(idx, sorted.size() - 1)];
+    }
+    return q.back();
+}
+
+static QString GetMetricLabel(int metricId) {
+    switch (metricId) {
+        case PM_METRIC_BETWEEN_DISPLAY_CHANGE: return "Between Display Change";
+        case PM_METRIC_UNTIL_DISPLAYED: return "Until Displayed";
+        case PM_METRIC_DROPPED_FRAMES: return "Dropped Frames";
+        case PM_METRIC_APPLICATION_FPS: return "Application FPS";
+        case PM_METRIC_DISPLAYED_FPS: return "Displayed FPS";
+        case PM_METRIC_PRESENTED_FPS: return "Presented FPS";
+        case PM_METRIC_PRESENTED_FRAME_TIME: return "Presented Frame Time";
+        case PM_METRIC_DISPLAYED_FRAME_TIME: return "Displayed Frame Time";
+        case PM_METRIC_GPU_UTILIZATION: return "GPU Utilization";
+        case PM_METRIC_GPU_POWER: return "GPU Power";
+        case PM_METRIC_GPU_TEMPERATURE: return "GPU Temperature";
+        case PM_METRIC_GPU_FREQUENCY: return "GPU Frequency";
+        case PM_METRIC_GPU_MEM_USED: return "GPU VRAM Used";
+        case PM_METRIC_CPU_UTILIZATION: return "CPU Utilization";
+        case PM_METRIC_CPU_POWER: return "CPU Power";
+        case PM_METRIC_CPU_TEMPERATURE: return "CPU Temperature";
+        case PM_METRIC_CPU_FREQUENCY: return "CPU Frequency";
+        default: return "Metric";
+    }
+}
+
+static QString GetMetricUnits(int metricId) {
+    switch (metricId) {
+        case PM_METRIC_BETWEEN_DISPLAY_CHANGE:
+        case PM_METRIC_UNTIL_DISPLAYED:
+        case PM_METRIC_PRESENTED_FRAME_TIME:
+        case PM_METRIC_DISPLAYED_FRAME_TIME: return "ms";
+        case PM_METRIC_APPLICATION_FPS:
+        case PM_METRIC_DISPLAYED_FPS:
+        case PM_METRIC_PRESENTED_FPS: return "FPS";
+        case PM_METRIC_GPU_UTILIZATION:
+        case PM_METRIC_CPU_UTILIZATION: return "%";
+        case PM_METRIC_GPU_POWER:
+        case PM_METRIC_CPU_POWER: return "W";
+        case PM_METRIC_GPU_TEMPERATURE:
+        case PM_METRIC_CPU_TEMPERATURE: return "°C";
+        case PM_METRIC_GPU_FREQUENCY:
+        case PM_METRIC_CPU_FREQUENCY: return "MHz";
+        case PM_METRIC_GPU_MEM_USED: return "GB";
+        default: return "";
+    }
+}
+
+void WindowedOverlayWidget::paintEvent(QPaintEvent *) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    int w = width();
+    int h = height();
+
+    // 1. Background Panel with glowing top border
+    QColor bgColor(11, 14, 21, 235);
+    QColor borderColor(0, 188, 242, 100);
+    p.setPen(QPen(borderColor, 1.5));
+    p.setBrush(bgColor);
+    p.drawRoundedRect(1, 1, w - 2, h - 2, 6, 6);
+
+    // Cyan top glow line
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0, 229, 255, 230));
+    p.drawRoundedRect(1, 1, w - 2, 2.5, 1, 1);
+
+    // 2. Title Bar: "GNUMON PRESENTMON [WINDOWED]" + Close button
+    p.setFont(QFont("sans-serif", 10, QFont::Bold));
+    p.setPen(QColor(0, 230, 140));
+    p.drawText(14, 24, "GNUMON");
+
+    p.setFont(QFont("sans-serif", 9, QFont::Normal));
+    p.setPen(QColor(160, 170, 190));
+    p.drawText(76, 24, "PRESENTMON");
+
+    p.setFont(QFont("sans-serif", 8, QFont::Bold));
+    p.setPen(QColor(0, 200, 255));
+    p.drawText(166, 24, "[WINDOWED]");
+
+    // Close 'X' Button at top right
+    p.setPen(QColor(160, 170, 190));
+    p.setFont(QFont("sans-serif", 10, QFont::Bold));
+    p.drawText(w - 22, 24, "✕");
+
+    int curY = 40;
+
+    // 3. Render Widgets
+    for (const auto& widget : config_->loadout.widgets) {
+        if (widget.widgetType == WidgetType::Readout) {
+            if (widget.metrics.isEmpty()) continue;
+            const auto& line = widget.metrics[0];
+            const auto& hist = GetHistoryForMetric(line.metricId);
+            float val = CalculateStat(hist, line.statId);
+
+            // Color swatch
+            p.setPen(Qt::NoPen);
+            p.setBrush(line.lineColor);
+            p.drawRect(14, curY + 3, 8, 8);
+
+            // Label
+            QString statName = (line.statId == 1) ? "(avg)" : (line.statId == 6) ? "(99%)" : (line.statId == 5) ? "(1%)" : (line.statId == 4) ? "(raw)" : "";
+            QString lbl = QString("%1 %2").arg(GetMetricLabel(line.metricId)).arg(statName);
+            p.setPen(QColor(220, 225, 235));
+            p.setFont(QFont("sans-serif", 9, QFont::Normal));
+            p.drawText(28, curY + 12, lbl);
+
+            // Value + Unit
+            QString valStr = QString::number(val, 'f', 1) + " " + GetMetricUnits(line.metricId);
+            p.setPen(QColor(line.lineColor));
+            p.setFont(QFont("sans-serif", 9, QFont::Bold));
+            p.drawText(w - 14 - p.fontMetrics().horizontalAdvance(valStr), curY + 12, valStr);
+
+            curY += 24;
+        } else {
+            // Graph Widget (Oscilloscope)
+            for (int s = 0; s < widget.metrics.size(); ++s) {
+                const auto& line = widget.metrics[s];
+                const auto& hist = GetHistoryForMetric(line.metricId);
+                float val = CalculateStat(hist, line.statId);
+
+                p.setPen(Qt::NoPen);
+                p.setBrush(line.lineColor);
+                p.drawRect(14, curY + 4, 8, 8);
+
+                QString statName = (line.statId == 1) ? "(avg)" : (line.statId == 6) ? "(99%)" : (line.statId == 5) ? "(1%)" : (line.statId == 4) ? "(raw)" : "";
+                QString lbl = QString("%1 %2").arg(GetMetricLabel(line.metricId)).arg(statName);
+                p.setPen(QColor(220, 225, 235));
+                p.setFont(QFont("sans-serif", 8, QFont::Normal));
+                p.drawText(28, curY + 12, lbl);
+
+                QString valStr = QString::number(val, 'f', 1) + " " + GetMetricUnits(line.metricId);
+                p.setPen(line.lineColor);
+                p.setFont(QFont("sans-serif", 8, QFont::Bold));
+                p.drawText(w - 14 - p.fontMetrics().horizontalAdvance(valStr), curY + 12, valStr);
+
+                curY += 18;
+            }
+
+            // Graph Box
+            int gx = 48;
+            int gy = curY + 4;
+            int gw = w - gx - 20;
+            int gh = 66;
+
+            // Plot Box Backdrop + gridlines
+            p.setPen(QPen(QColor(25, 35, 50), 1));
+            p.setBrush(QColor(6, 9, 14, 220));
+            p.drawRect(gx, gy, gw, gh);
+
+            p.setPen(QPen(QColor(30, 42, 60, 140), 1, Qt::DashLine));
+            p.drawLine(gx, gy + gh * 0.25, gx + gw, gy + gh * 0.25);
+            p.drawLine(gx, gy + gh * 0.50, gx + gw, gy + gh * 0.50);
+            p.drawLine(gx, gy + gh * 0.75, gx + gw, gy + gh * 0.75);
+
+            // Compute dynamic range
+            float minVal = widget.rangeMin;
+            float maxVal = widget.rangeMax;
+            if (widget.autoScale) {
+                for (const auto& line : widget.metrics) {
+                    const auto& hist = GetHistoryForMetric(line.metricId);
+                    for (float v : hist) {
+                        if (v < minVal) minVal = v;
+                        if (v > maxVal) maxVal = v;
+                    }
+                }
+                if (maxVal <= minVal) maxVal = minVal + 1.0f;
+            }
+            float range = maxVal - minVal;
+            if (range <= 0.001f) range = 1.0f;
+
+            // Y-axis labels
+            p.setPen(QColor(130, 145, 170));
+            p.setFont(QFont("sans-serif", 7, QFont::Normal));
+            p.drawText(14, gy + 10, QString::number(maxVal, 'f', (maxVal < 10) ? 1 : 0));
+            p.drawText(14, gy + gh, QString::number(minVal, 'f', (minVal < 10) ? 1 : 0));
+
+            // Render each series
+            for (const auto& line : widget.metrics) {
+                const auto& hist = GetHistoryForMetric(line.metricId);
+                if (hist.size() < 2) continue;
+
+                float stepX = static_cast<float>(gw) / static_cast<float>(hist.size() - 1);
+                auto getPlotY = [&](float v) -> float {
+                    float norm = (v - minVal) / range;
+                    norm = std::clamp(norm, 0.0f, 1.0f);
+                    return (gy + gh) - (norm * gh);
+                };
+
+                // Translucent Area Fill
+                if (line.fillColor.alpha() > 0) {
+                    QPainterPath areaPath;
+                    areaPath.moveTo(gx, gy + gh);
+                    for (size_t i = 0; i < hist.size(); ++i) {
+                        float px = gx + i * stepX;
+                        float py = getPlotY(hist[i]);
+                        areaPath.lineTo(px, py);
+                    }
+                    areaPath.lineTo(gx + (hist.size() - 1) * stepX, gy + gh);
+                    areaPath.closeSubpath();
+                    p.fillPath(areaPath, line.fillColor);
+                }
+
+                // Line curve
+                p.setPen(QPen(line.lineColor, 1.8));
+                bool isStepped = (line.statId == 6 || line.statId == 5); // 99% or 1%
+                for (size_t i = 0; i < hist.size() - 1; ++i) {
+                    float px0 = gx + i * stepX;
+                    float py0 = getPlotY(hist[i]);
+                    float px1 = gx + (i + 1) * stepX;
+                    float py1 = getPlotY(hist[i + 1]);
+
+                    if (isStepped) {
+                        p.drawLine(QPointF(px0, py0), QPointF(px1, py0));
+                        p.drawLine(QPointF(px1, py0), QPointF(px1, py1));
+                    } else {
+                        p.drawLine(QPointF(px0, py0), QPointF(px1, py1));
+                    }
+                }
+            }
+
+            // X-axis 10..0
+            p.setPen(QColor(110, 125, 145));
+            p.setFont(QFont("sans-serif", 7, QFont::Normal));
+            p.drawText(gx, gy + gh + 12, "10");
+            p.drawText(gx + gw - 8, gy + gh + 12, "0");
+
+            curY = gy + gh + 18;
+        }
+    }
+}
+
+void WindowedOverlayWidget::mousePressEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton) {
+        // Check if clicked close button 'X' (top right ~25px)
+        if (event->pos().x() >= width() - 30 && event->pos().y() <= 30) {
+            config_->overlayWindowedMode = false;
+            config_->Save();
+            hide();
+            emit windowedClosed();
+            return;
+        }
+        dragging_ = true;
+        dragPosition_ = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        event->accept();
+    }
+}
+
+void WindowedOverlayWidget::mouseMoveEvent(QMouseEvent *event) {
+    if (dragging_ && (event->buttons() & Qt::LeftButton)) {
+        move(event->globalPosition().toPoint() - dragPosition_);
+        event->accept();
+    }
+}
+
+void WindowedOverlayWidget::mouseReleaseEvent(QMouseEvent *) {
+    dragging_ = false;
+}
+
+} // namespace gnumon::gui

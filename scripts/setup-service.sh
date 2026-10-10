@@ -152,14 +152,22 @@ EOF
     install-udev)
         echo "==> Installing udev rules using pkexec..."
         pkexec bash -c '
+            TARGET_USER="'"$USER"'"
             mkdir -p /etc/udev/rules.d &&
             cat <<EOF > /etc/udev/rules.d/99-gnumon-input.rules
-# gnumon - Global evdev input hotkey and mouse click-to-photon latency access for current active desktop user
-KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="seat", TAG+="uaccess"
-KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", TAG+="seat", TAG+="uaccess"
+# gnumon - Global evdev input hotkey and mouse click-to-photon latency access
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", MODE="0666", TAG+="seat", TAG+="uaccess"
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", MODE="0666", TAG+="seat", TAG+="uaccess"
+KERNEL=="event*", SUBSYSTEM=="input", GROUP="input", MODE="0666"
 EOF
             udevadm control --reload-rules &&
             udevadm trigger -s input -c change
+            # Add user to input group and set ACLs immediately
+            if [ -n "$TARGET_USER" ]; then
+                usermod -aG input "$TARGET_USER" 2>/dev/null || true
+                setfacl -m u:"$TARGET_USER":rw /dev/input/event* 2>/dev/null || true
+            fi
+            chmod 0666 /dev/input/event* 2>/dev/null || true
         '
         echo "==> Udev rules installed and reloaded successfully!"
         ;;
@@ -167,14 +175,21 @@ EOF
     install-system)
         echo "==> Installing system-wide daemon and udev rules using pkexec..."
         pkexec bash -c '
+            TARGET_USER="'"$USER"'"
             mkdir -p /etc/udev/rules.d &&
             cat <<EOF > /etc/udev/rules.d/99-gnumon-input.rules
-# gnumon - Global evdev input hotkey and mouse click-to-photon latency access for current active desktop user
-KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="seat", TAG+="uaccess"
-KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", TAG+="seat", TAG+="uaccess"
+# gnumon - Global evdev input hotkey and mouse click-to-photon latency access
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", MODE="0666", TAG+="seat", TAG+="uaccess"
+KERNEL=="event*", SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", MODE="0666", TAG+="seat", TAG+="uaccess"
+KERNEL=="event*", SUBSYSTEM=="input", GROUP="input", MODE="0666"
 EOF
             udevadm control --reload-rules &&
             udevadm trigger -s input -c change
+            if [ -n "$TARGET_USER" ]; then
+                usermod -aG input "$TARGET_USER" 2>/dev/null || true
+                setfacl -m u:"$TARGET_USER":rw /dev/input/event* 2>/dev/null || true
+            fi
+            chmod 0666 /dev/input/event* 2>/dev/null || true
         '
         echo "==> System service and udev rules installed and activated!"
         ;;

@@ -254,12 +254,16 @@ QWidget* SettingsPage::CreateOverlayPage() {
 
     int row = 0;
 
-    // Windowed Mode (disabled)
+    // Windowed Mode
     layout->addWidget(CreateRowLabel("Windowed Mode", "Display widgets on a standalone window instead of an overlay tracking the target"), row, 0);
-    auto *swWindowed = new ToggleSwitch("Enable", card);
-    swWindowed->setChecked(false);
-    swWindowed->setEnabled(false); // We use in-game Vulkan overlay
-    layout->addWidget(swWindowed, row++, 1);
+    swWindowed_ = new ToggleSwitch("Enable", card);
+    swWindowed_->setChecked(config_->overlayWindowedMode);
+    connect(swWindowed_, &ToggleSwitch::toggled, this, [this](bool val) {
+        config_->overlayWindowedMode = val;
+        config_->Save();
+        emit configChanged();
+    });
+    layout->addWidget(swWindowed_, row++, 1);
 
     // Automatic Hide
     layout->addWidget(CreateRowLabel("Automatic Hide", "Automatically disable the overlay during capture"), row, 0);
@@ -742,6 +746,7 @@ QWidget* SettingsPage::CreateAboutPage() {
 
 void SettingsPage::ReloadFromConfig() {
     if (!config_) return;
+    if (swWindowed_) swWindowed_->setChecked(config_->overlayWindowedMode);
     swAutoDuringCapture_->setChecked(config_->overlayHideDuringCapture);
     quadrantPos_->setPosition(config_->overlayCorner);
     sliderWidth_->setValue(config_->overlayWidth);

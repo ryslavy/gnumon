@@ -1,6 +1,7 @@
 #include "../ipc/FrameRingBuffer.h"
 #include "../common/Clock.h"
 #include "GlOverlayRenderer.h"
+#include "InGameHotkeyManager.h"
 #include <dlfcn.h>
 #include <atomic>
 #include <unistd.h>
@@ -120,57 +121,38 @@ void EnsureInit() {
     }
 }
 
-static void CheckInGameHotkeys(uint64_t nowNs) {
-    static uint64_t lastCheckNs = 0;
-    if (nowNs < lastCheckNs + 33'000'000) {
-        return; // Check at most ~30 Hz
-    }
-    lastCheckNs = nowNs;
+static gnumon::layer::InGameHotkeyManager g_glHotkeyManager;
 
-    static std::vector<int> evdevFds;
-    static bool evdevScanned = false;
-    if (!evdevScanned) {
-        evdevScanned = true;
-        DIR* dir = opendir("/dev/input");
-        if (dir) {
-            struct dirent* ent;
-            while ((ent = readdir(dir)) != nullptr) {
-                if (strncmp(ent->d_name, "event", 5) == 0) {
-                    std::string path = std::string("/dev/input/") + ent->d_name;
-                    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-                    if (fd >= 0) {
-                        evdevFds.push_back(fd);
-                    }
-                }
-            }
-            closedir(dir);
+static void CheckInGameHotkeys(uint64_t nowNs) {
+    g_glHotkeyManager.UpdateChords(g_glOverlay.GetHotkeyOverlay(),
+                                  g_glOverlay.GetHotkeyPresetCycle(),
+                                  g_glOverlay.GetHotkeyCapture());
+
+    auto ev = g_glHotkeyManager.Poll(nowNs);
+
+    if (ev.cyclePreset) {
+        int nextPreset = (g_glOverlay.GetPreset() + 1) % 3;
+        g_glOverlay.SetPreset(nextPreset);
+        const char* presetNames[] = {"Compact", "Standard (Oscilloscope)", "Detailed"};
+        g_glOverlay.TriggerToast("Preset Changed", presetNames[nextPreset], 2.5f);
+    }
+    if (ev.toggleOverlay) {
+        g_enableOverlay = !g_enableOverlay;
+        g_glProducer.SetOverlayEnabled(g_enableOverlay);
+        g_glOverlay.TriggerToast("In-Game Overlay", g_enableOverlay ? "ENABLED" : "DISABLED", 2.0f);
+        if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
+            fprintf(stderr, "[gnumon-gl] In-game hotkey pressed! In-Game HUD: %s\n",
+                    g_enableOverlay ? "ON" : "OFF");
         }
     }
-
-    for (int efd : evdevFds) {
-        struct input_event iev[8];
-        ssize_t n = read(efd, iev, sizeof(iev));
-        if (n > 0) {
-            size_t count = n / sizeof(struct input_event);
-            for (size_t i = 0; i < count; ++i) {
-                if (iev[i].type == EV_KEY && iev[i].value == 1) {
-                    if (iev[i].code == 66 /* KEY_F8 */) {
-                        int nextPreset = (g_glOverlay.GetPreset() + 1) % 3;
-                        g_glOverlay.SetPreset(nextPreset);
-                        const char* presetNames[] = {"Compact", "Standard (Oscilloscope)", "Detailed"};
-                        g_glOverlay.TriggerToast("Preset Changed", presetNames[nextPreset], 2.5f);
-                    } else if (iev[i].code == 67 /* KEY_F9 */) {
-                        g_enableOverlay = !g_enableOverlay;
-                        g_glProducer.SetOverlayEnabled(g_enableOverlay);
-                        g_glOverlay.TriggerToast("In-Game Overlay", g_enableOverlay ? "ENABLED" : "DISABLED", 2.0f);
-                    } else if (iev[i].code == 68 /* KEY_F10 */) {
-                        bool newRec = !g_glProducer.IsRecordingActive();
-                        g_glProducer.SetRecordingActive(newRec);
-                        g_glOverlay.TriggerToast(newRec ? "Benchmark Capture" : "Capture Saved",
-                                                newRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
-                    }
-                }
-            }
+    if (ev.toggleCapture) {
+        bool newRec = !g_glProducer.IsRecordingActive();
+        g_glProducer.SetRecordingActive(newRec);
+        g_glOverlay.TriggerToast(newRec ? "Benchmark Capture" : "Capture Saved",
+                                newRec ? "RECORDING STARTED" : "CSV BENCHMARK SAVED", 3.0f);
+        if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
+            fprintf(stderr, "[gnumon-gl] In-game hotkey pressed! Capture: %s\n",
+                    newRec ? "STARTING" : "STOPPED");
         }
     }
 }
@@ -178,6 +160,13 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
 void PreSwapHook(uint64_t nowNs) {
     EnsureInit();
     CheckInGameHotkeys(nowNs);
+
+    static bool lastProducerOverlay = g_enableOverlay;
+    bool currentProducerOverlay = g_glProducer.IsOverlayEnabled();
+    if (currentProducerOverlay != lastProducerOverlay) {
+        g_enableOverlay = currentProducerOverlay;
+        lastProducerOverlay = currentProducerOverlay;
+    }
 
     // Query active OpenGL Viewport dimensions
     static auto p_glGetIntegerv = reinterpret_cast<void (*)(GLenum, GLint*)>(dlsym(RTLD_DEFAULT, "glGetIntegerv"));

@@ -218,6 +218,8 @@ if(Qt6_FOUND)
         src/gui/LoadoutConfigPage.h
         src/gui/LoadoutRowWidget.cpp
         src/gui/LoadoutRowWidget.h
+        src/gui/WindowedOverlayWidget.cpp
+        src/gui/WindowedOverlayWidget.h
         src/gui/ToggleSwitch.cpp
         src/gui/ToggleSwitch.h
         src/gui/HotkeyPillWidget.cpp

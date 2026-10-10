@@ -433,6 +433,7 @@ struct AppConfig {
     bool captureTargetBlockList = true;
 
     // 5. Overlay Configuration
+    bool overlayWindowedMode = false;
     bool overlayHideDuringCapture = true;
     int overlayCorner = 0; // 0: Top-Left, 1: Top-Right, 2: Bottom-Left, 3: Bottom-Right
     int overlayWidth = 400; // 200 - 1920
@@ -498,6 +499,7 @@ struct AppConfig {
         s.endGroup();
 
         s.beginGroup("Overlay");
+        overlayWindowedMode = s.value("windowedMode", overlayWindowedMode).toBool();
         overlayHideDuringCapture = s.value("hideDuringCapture", overlayHideDuringCapture).toBool();
         overlayCorner = s.value("inGameHudCorner", overlayCorner).toInt();
         overlayWidth = s.value("width", overlayWidth).toInt();
@@ -565,6 +567,7 @@ struct AppConfig {
         s.endGroup();
 
         s.beginGroup("Overlay");
+        s.setValue("windowedMode", overlayWindowedMode);
         s.setValue("hideDuringCapture", overlayHideDuringCapture);
         s.setValue("inGameHudCorner", overlayCorner);
         s.setValue("inGameHudPreset", selectedPreset);
