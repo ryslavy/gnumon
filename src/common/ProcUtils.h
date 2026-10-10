@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <sys/mman.h>
+#include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -33,6 +34,30 @@ inline uint32_t GetTgidForPid(uint32_t pid) {
     return pid;
 }
 
+// Checks whether a gnumon ring buffer is actively held by a live process (native or inside container)
+inline bool IsRingAlive(uint32_t pid) {
+    if (pid == 0) return false;
+    std::string name = "/gnumon_ring_" + std::to_string(pid);
+    int fd = shm_open(name.c_str(), O_RDWR, 0666);
+    if (fd < 0) return false;
+
+    // Try acquiring exclusive non-blocking advisory lock
+    int ret = flock(fd, LOCK_EX | LOCK_NB);
+    if (ret == 0) {
+        // We acquired the lock! That means NO producer is holding the lock.
+        flock(fd, LOCK_UN);
+        close(fd);
+        // Fallback: check if /proc/<pid> exists on host (for producers that didn't lock)
+        return std::filesystem::exists("/proc/" + std::to_string(pid));
+    }
+    close(fd);
+    // If errno is EWOULDBLOCK or EAGAIN, a producer process is actively holding the lock!
+    if (errno == EWOULDBLOCK || errno == EAGAIN) {
+        return true;
+    }
+    return std::filesystem::exists("/proc/" + std::to_string(pid));
+}
+
 // Cleans up orphaned /dev/shm/gnumon_ring_* files from dead processes
 inline void CleanStaleRings() {
     std::filesystem::path shmDir("/dev/shm");
@@ -44,7 +69,7 @@ inline void CleanStaleRings() {
             std::string pidStr = name.substr(12);
             try {
                 uint32_t pid = std::stoul(pidStr);
-                if (pid > 0 && !std::filesystem::exists("/proc/" + std::to_string(pid))) {
+                if (pid > 0 && !IsRingAlive(pid)) {
                     shm_unlink(("/" + name).c_str());
                 }
             } catch (...) {}
@@ -65,7 +90,7 @@ inline std::vector<uint32_t> GetActiveRingPids() {
             std::string pidStr = name.substr(12);
             try {
                 uint32_t pid = std::stoul(pidStr);
-                if (pid > 0 && std::filesystem::exists("/proc/" + std::to_string(pid))) {
+                if (pid > 0 && IsRingAlive(pid)) {
                     activePids.push_back(pid);
                 }
             } catch (...) {}
@@ -80,9 +105,34 @@ inline std::string GetProcessName(uint32_t pid) {
     std::ifstream commFile(commPath);
     if (commFile.is_open()) {
         std::string comm;
-        std::getline(commFile, comm);
-        return comm;
+        if (std::getline(commFile, comm) && !comm.empty()) {
+            return comm;
+        }
     }
+
+    // Fallback: check ring header for container process name
+    std::string ringPath = "/gnumon_ring_" + std::to_string(pid);
+    int fd = shm_open(ringPath.c_str(), O_RDONLY, 0666);
+    if (fd >= 0) {
+        struct {
+            uint64_t w;
+            char p1[56];
+            uint64_t r;
+            char p2[56];
+            uint32_t pid;
+            uint32_t magic;
+            uint32_t flags;
+            char processName[52];
+        } hdr{};
+        if (read(fd, &hdr, sizeof(hdr)) == sizeof(hdr) && hdr.magic == 0x474E554D) {
+            if (hdr.processName[0] != '\0') {
+                close(fd);
+                return std::string(hdr.processName);
+            }
+        }
+        close(fd);
+    }
+
     return "";
 }
 

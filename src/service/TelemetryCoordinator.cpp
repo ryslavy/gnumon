@@ -134,7 +134,7 @@ void TelemetryCoordinator::RecordFrameLocked(const ipc::FrameEvent& f) {
 void TelemetryCoordinator::EnsureConsumerConnectedLocked() {
     if (frameConsumer_.IsConnected()) {
         uint32_t currentPid = frameConsumer_.GetProcessId();
-        bool isDead = (currentPid > 0 && !std::filesystem::exists("/proc/" + std::to_string(currentPid)));
+        bool isDead = (currentPid > 0 && !common::IsRingAlive(currentPid));
         bool targetChanged = (trackedPid_ > 0 && trackedPid_ != currentPid);
         if (isDead || targetChanged) {
             frameConsumer_.Close();

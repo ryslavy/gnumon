@@ -375,8 +375,8 @@ void MainWindow::OnCyclePreset() {
 void MainWindow::OnToggleRecording() {
     isRecording_ = !isRecording_;
     if (isRecording_) {
-        // Auto-acquire active game PID if trackedPid_ is 0
-        bool trackedHasRing = (trackedPid_ > 0 && std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(trackedPid_)));
+        // Auto-acquire active game PID if trackedPid_ is 0 or dead
+        bool trackedHasRing = (trackedPid_ > 0 && common::IsRingAlive(trackedPid_));
         if (!trackedHasRing) {
             auto activePids = common::GetActiveRingPids();
             if (!activePids.empty()) {
@@ -472,7 +472,7 @@ void MainWindow::OnToggleRecording() {
 
 void MainWindow::OnPollTimer() {
     // If tracked PID is invalid or ring disconnected, dynamically auto-acquire active ring
-    bool trackedHasRing = (trackedPid_ > 0 && std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(trackedPid_)));
+    bool trackedHasRing = (trackedPid_ > 0 && common::IsRingAlive(trackedPid_));
     if (!trackedHasRing && (config_.autoTarget || trackedPid_ == 0)) {
         auto activePids = common::GetActiveRingPids();
         if (!activePids.empty()) {

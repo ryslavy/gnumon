@@ -1,6 +1,7 @@
 #include "../../include/gnumon/PresentMonAPI.h"
 #include "../service/TelemetryCoordinator.h"
 #include "../common/Clock.h"
+#include "../common/ProcUtils.h"
 #include "IntrospectionBuilder.h"
 #include <cstring>
 #include <memory>
@@ -902,10 +903,8 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(
     // Process & Runtime info
     pSnapshot->processId = (processId > 0) ? processId : (hasFrame ? frame.processId : 0);
     if (pSnapshot->processId > 0) {
-        std::string commPath = "/proc/" + std::to_string(pSnapshot->processId) + "/comm";
-        std::ifstream commFile(commPath);
-        std::string comm;
-        if (commFile.is_open() && std::getline(commFile, comm)) {
+        std::string comm = gnumon::common::ProcUtils::GetProcessName(pSnapshot->processId);
+        if (!comm.empty()) {
             std::strncpy(pSnapshot->processName, comm.c_str(), sizeof(pSnapshot->processName) - 1);
         }
     }
@@ -944,8 +943,12 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(
     if (pSnapshot->cpuFrameTimeAvgMs <= 0.0) pSnapshot->cpuFrameTimeAvgMs = curFtMs;
     pSnapshot->cpuFrameTime99pMs = coordinator->GetStatisticalMetric(PM_METRIC_CPU_FRAME_TIME, PM_STAT_PERCENTILE_99, 1000.0);
     pSnapshot->inPresentApiMs = hasFrame ? (static_cast<double>(frame.presentDurationNs) / 1'000'000.0) : 0.0;
-    pSnapshot->untilDisplayedMs = (hasFrame && frame.displayTimestampNs >= frame.presentStartTimestampNs)
-        ? (static_cast<double>(frame.displayTimestampNs - frame.presentStartTimestampNs) / 1'000'000.0) : 0.0;
+    pSnapshot->untilDisplayedMs = (hasFrame && frame.cpuStartTimestampNs > 0 && frame.displayTimestampNs >= frame.cpuStartTimestampNs)
+        ? (static_cast<double>(frame.displayTimestampNs - frame.cpuStartTimestampNs) / 1'000'000.0)
+        : ((hasFrame && frame.displayTimestampNs >= frame.presentStartTimestampNs && (frame.displayTimestampNs - frame.presentStartTimestampNs) > 1'000'000ULL)
+            ? (static_cast<double>(frame.displayTimestampNs - frame.presentStartTimestampNs) / 1'000'000.0)
+            : curFtMs);
+    if (pSnapshot->untilDisplayedMs <= 0.0) pSnapshot->untilDisplayedMs = curFtMs;
     pSnapshot->betweenPresentsMs = curFtMs;
     pSnapshot->flipDelayMs = 0.0;
 

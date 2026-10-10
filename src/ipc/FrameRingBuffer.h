@@ -5,9 +5,11 @@
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
+#include <fstream>
 
 namespace gnumon::ipc {
 
@@ -67,6 +69,7 @@ struct alignas(64) SharedRingHeader {
     uint32_t processId = 0;
     uint32_t magic = 0x474E554D; // "GNUM"
     std::atomic<uint32_t> controlFlags{0}; // Bit 0: RecordingActive, Bit 1: OverlayEnabled
+    char processName[52]{};
     TelemetrySnapshot telemetry{};
     FrameEvent events[RING_BUFFER_CAPACITY];
 };
@@ -79,6 +82,7 @@ public:
     }
 
     bool Open(uint32_t pid) {
+        Close();
         processId_ = pid;
         shmName_ = "/gnumon_ring_" + std::to_string(pid);
 
@@ -88,22 +92,38 @@ public:
         int fd = shm_open(shmName_.c_str(), O_CREAT | O_RDWR, 0666);
         if (fd < 0) return false;
 
+        // Take exclusive advisory lock so consumers know the producer is alive
+        flock(fd, LOCK_EX | LOCK_NB);
+
         if (ftruncate(fd, sizeof(SharedRingHeader)) < 0) {
+            flock(fd, LOCK_UN);
             close(fd);
             return false;
         }
 
         void* ptr = mmap(nullptr, sizeof(SharedRingHeader), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        close(fd);
+        if (ptr == MAP_FAILED) {
+            flock(fd, LOCK_UN);
+            close(fd);
+            return false;
+        }
 
-        if (ptr == MAP_FAILED) return false;
-
+        fd_ = fd;
         ring_ = static_cast<SharedRingHeader*>(ptr);
         std::memset(static_cast<void*>(ring_), 0, sizeof(SharedRingHeader));
         ring_->magic = 0x474E554D;
         ring_->processId = pid;
         ring_->writeIndex.store(0, std::memory_order_relaxed);
         ring_->readIndex.store(0, std::memory_order_relaxed);
+
+        // Detect own process comm name
+        std::ifstream commFile("/proc/self/comm");
+        if (commFile.is_open()) {
+            std::string comm;
+            if (std::getline(commFile, comm) && !comm.empty()) {
+                std::strncpy(ring_->processName, comm.c_str(), sizeof(ring_->processName) - 1);
+            }
+        }
 
         return true;
     }
@@ -146,6 +166,11 @@ public:
         return out.valid != 0;
     }
 
+    void WriteTelemetry(const TelemetrySnapshot& snap) {
+        if (!ring_) return;
+        ring_->telemetry = snap;
+    }
+
     void Close() {
         if (ring_) {
             munmap(ring_, sizeof(SharedRingHeader));
@@ -154,11 +179,19 @@ public:
                 shm_unlink(shmName_.c_str());
             }
         }
+        if (fd_ >= 0) {
+            flock(fd_, LOCK_UN);
+            close(fd_);
+            fd_ = -1;
+        }
+        processId_ = 0;
+        shmName_.clear();
     }
 
 private:
     uint32_t processId_ = 0;
     std::string shmName_;
+    int fd_ = -1;
     SharedRingHeader* ring_ = nullptr;
 };
 
@@ -170,6 +203,7 @@ public:
     }
 
     bool Open(uint32_t pid) {
+        Close();
         processId_ = pid;
         shmName_ = "/gnumon_ring_" + std::to_string(pid);
 
@@ -188,21 +222,25 @@ public:
             return false;
         }
 
+        uint64_t w = ring_->writeIndex.load(std::memory_order_acquire);
+        localReadIndex_ = (w > 32) ? (w - 32) : 0;
         return true;
     }
 
     bool Pop(FrameEvent& event) {
         if (!ring_) return false;
 
-        uint64_t currentRead = ring_->readIndex.load(std::memory_order_relaxed);
         uint64_t currentWrite = ring_->writeIndex.load(std::memory_order_acquire);
-
-        if (currentRead >= currentWrite) {
-            return false; // Empty
+        if (localReadIndex_ >= currentWrite) {
+            return false; // Empty or up to date
         }
 
-        event = ring_->events[currentRead & RING_BUFFER_MASK];
-        ring_->readIndex.store(currentRead + 1, std::memory_order_release);
+        if (currentWrite - localReadIndex_ > RING_BUFFER_CAPACITY) {
+            localReadIndex_ = currentWrite - RING_BUFFER_CAPACITY;
+        }
+
+        event = ring_->events[localReadIndex_ & RING_BUFFER_MASK];
+        localReadIndex_++;
         return true;
     }
 
@@ -221,6 +259,10 @@ public:
         return processId_;
     }
 
+    const char* GetProcessName() const {
+        return ring_ ? ring_->processName : "";
+    }
+
     void Close() {
         if (ring_) {
             munmap(ring_, sizeof(SharedRingHeader));
@@ -228,6 +270,7 @@ public:
         }
         processId_ = 0;
         shmName_.clear();
+        localReadIndex_ = 0;
     }
 
     bool IsConnected() const {
@@ -263,6 +306,7 @@ private:
     uint32_t processId_ = 0;
     std::string shmName_;
     SharedRingHeader* ring_ = nullptr;
+    uint64_t localReadIndex_ = 0;
 };
 
 } // namespace gnumon::ipc

@@ -2,6 +2,7 @@
 #include "../common/Clock.h"
 #include "GlOverlayRenderer.h"
 #include "InGameHotkeyManager.h"
+#include "DirectSysfsTelemetry.h"
 #include <dlfcn.h>
 #include <atomic>
 #include <unistd.h>
@@ -213,6 +214,12 @@ void PreSwapHook(uint64_t nowNs) {
 
     gnumon::ipc::TelemetrySnapshot telemSnap{};
     bool hasTelem = g_glProducer.ReadTelemetry(telemSnap);
+    if (!hasTelem || telemSnap.valid == 0) {
+        static gnumon::layer::DirectSysfsTelemetry s_glSysfs;
+        s_glSysfs.Sample(telemSnap);
+        hasTelem = true;
+        g_glProducer.WriteTelemetry(telemSnap);
+    }
 
     // Render in-game HUD overlay directly into OpenGL context before buffer swap
     bool active = g_enableOverlay || g_glOverlay.HasActiveToast();

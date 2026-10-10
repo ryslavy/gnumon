@@ -9,6 +9,7 @@
 #include <deque>
 #include <cstdint>
 #include <fstream>
+#include <filesystem>
 #include <sys/stat.h>
 #include "font_atlas.hpp"
 #include "../ipc/FrameRingBuffer.h"
@@ -60,6 +61,9 @@ public:
     void SetGpuName(const std::string& name) {
         if (!name.empty()) gpuName_ = name;
     }
+    const std::string& GetGpuName() const {
+        return gpuName_;
+    }
     void SetCpuName(const std::string& name) {
         if (!name.empty()) cpuName_ = name;
     }
@@ -83,6 +87,62 @@ public:
                             break;
                         }
                     }
+                }
+            }
+        }
+        if (gpuName_.empty() || gpuName_ == "Auto-detect GPU") {
+            for (int i = 0; i < 8; ++i) {
+                auto dev = std::filesystem::path("/sys/class/drm") / ("card" + std::to_string(i)) / "device";
+                auto devIdPath = dev / "device";
+                auto vendorPath = dev / "vendor";
+                if (std::filesystem::exists(devIdPath) && std::filesystem::exists(vendorPath)) {
+                    std::ifstream vf(vendorPath);
+                    std::string vendor;
+                    vf >> vendor;
+                    std::ifstream df(devIdPath);
+                    std::string devHex;
+                    df >> devHex;
+                    if (devHex.rfind("0x", 0) == 0) devHex = devHex.substr(2);
+                    for (char& c : devHex) c = std::tolower(c);
+
+                    const char* pciPaths[] = {"/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids"};
+                    for (const char* pciPath : pciPaths) {
+                        std::ifstream file(pciPath);
+                        if (!file.is_open()) continue;
+                        std::string line;
+                        bool inVendor = false;
+                        std::string targetPrefix = (vendor == "0x1002") ? "1002  " : (vendor == "0x8086" ? "8086  " : "10de  ");
+                        while (std::getline(file, line)) {
+                            if (line.empty() || line[0] == '#') continue;
+                            if (line.rfind(targetPrefix, 0) == 0) {
+                                inVendor = true;
+                                continue;
+                            }
+                            if (inVendor) {
+                                if (line[0] != '\t') break;
+                                if (line.size() > 6 && line[0] == '\t' && line[1] != '\t') {
+                                    std::string id = line.substr(1, 4);
+                                    for (char& c : id) c = std::tolower(c);
+                                    if (id == devHex) {
+                                        size_t start = line.find_first_not_of(" \t", 5);
+                                        if (start != std::string::npos) {
+                                            std::string name = line.substr(start);
+                                            auto bOpen = name.find('[');
+                                            auto bClose = name.find(']', bOpen);
+                                            if (bOpen != std::string::npos && bClose != std::string::npos && bClose > bOpen + 1) {
+                                                gpuName_ = name.substr(bOpen + 1, bClose - bOpen - 1);
+                                            } else {
+                                                gpuName_ = name;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (!gpuName_.empty() && gpuName_ != "Auto-detect GPU") break;
+                    }
+                    if (!gpuName_.empty() && gpuName_ != "Auto-detect GPU") break;
                 }
             }
         }

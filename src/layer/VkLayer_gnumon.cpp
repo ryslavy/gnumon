@@ -7,6 +7,7 @@
 #include "../common/Clock.h"
 #include "VulkanOverlayRenderer.h"
 #include "InGameHotkeyManager.h"
+#include "DirectSysfsTelemetry.h"
 
 #include <unordered_map>
 #include <mutex>
@@ -78,6 +79,8 @@ std::unordered_map<VkQueue, uint32_t> g_queueFamilyMap;
 std::unordered_map<VkQueue, VkDevice> g_queueToDeviceMap;
 std::atomic<bool> g_isZinkDriver{false};
 static PFN_vkGetPhysicalDeviceMemoryProperties g_getPhysicalDeviceMemoryProperties = nullptr;
+static PFN_vkGetPhysicalDeviceProperties g_getPhysicalDeviceProperties = nullptr;
+static gnumon::layer::DirectSysfsTelemetry g_directSysfsTelem;
 
 std::mutex g_swapchainMutex;
 std::unordered_map<VkSwapchainKHR, SwapchainInfo> g_swapchains;
@@ -316,6 +319,17 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateInstance(
             }
         }
 
+        if (!g_getPhysicalDeviceProperties) {
+            g_getPhysicalDeviceProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
+                nextGIPA(*pInstance, "vkGetPhysicalDeviceProperties"));
+            if (!g_getPhysicalDeviceProperties) {
+#if !defined(_WIN32)
+                g_getPhysicalDeviceProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
+                    dlsym(RTLD_DEFAULT, "vkGetPhysicalDeviceProperties"));
+#endif
+            }
+        }
+
         // Initialize frame ring buffer for this process
         g_producer.Open(getpid());
         if (g_enableOverlay) {
@@ -435,6 +449,19 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateDevice(
         disp.graphicsQueueFamilyIndex = gfxQFam;
         if (disp.getDeviceQueue) {
             disp.getDeviceQueue(*pDevice, gfxQFam, 0, &disp.graphicsQueue);
+        }
+        if (physicalDevice != VK_NULL_HANDLE) {
+            PFN_vkGetPhysicalDeviceProperties getProps = g_getPhysicalDeviceProperties;
+            if (!getProps) {
+#if !defined(_WIN32)
+                getProps = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(dlsym(RTLD_DEFAULT, "vkGetPhysicalDeviceProperties"));
+#endif
+            }
+            if (getProps) {
+                VkPhysicalDeviceProperties props{};
+                getProps(physicalDevice, &props);
+                g_overlayRenderer.SetGpuName(props.deviceName);
+            }
         }
         g_deviceDispatch[GetDispatchKey(*pDevice)] = disp;
     }
@@ -909,8 +936,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                                              disp.getProcAddr,
                                              g_getPhysicalDeviceMemoryProperties);
                 g_overlayRenderer.SetPreset(GetConfiguredHudPreset());
-                if (disp.getInstProcAddr && disp.physicalDevice != VK_NULL_HANDLE) {
-                    auto getProps = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(disp.getInstProcAddr(VK_NULL_HANDLE, "vkGetPhysicalDeviceProperties"));
+                if (disp.physicalDevice != VK_NULL_HANDLE) {
+                    PFN_vkGetPhysicalDeviceProperties getProps = g_getPhysicalDeviceProperties;
+                    if (!getProps) {
+#if !defined(_WIN32)
+                        getProps = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(dlsym(RTLD_DEFAULT, "vkGetPhysicalDeviceProperties"));
+#endif
+                    }
                     if (getProps) {
                         VkPhysicalDeviceProperties props{};
                         getProps(disp.physicalDevice, &props);
@@ -977,6 +1009,18 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
 
                 gnumon::ipc::TelemetrySnapshot telemSnap{};
                 bool hasTelem = g_producer.ReadTelemetry(telemSnap);
+                if (!hasTelem || telemSnap.valid == 0) {
+                    g_directSysfsTelem.Sample(telemSnap);
+                    hasTelem = true;
+                    g_producer.WriteTelemetry(telemSnap);
+                }
+                if (telemSnap.valid != 0) {
+                    if (telemSnap.gpuName[0] != '\0' && (g_overlayRenderer.GetGpuName().empty() || g_overlayRenderer.GetGpuName() == "Auto-detect GPU")) {
+                        g_overlayRenderer.SetGpuName(telemSnap.gpuName);
+                    } else if (telemSnap.gpuName[0] == '\0' && !g_overlayRenderer.GetGpuName().empty() && g_overlayRenderer.GetGpuName() != "Auto-detect GPU") {
+                        std::strncpy(telemSnap.gpuName, g_overlayRenderer.GetGpuName().c_str(), sizeof(telemSnap.gpuName) - 1);
+                    }
+                }
 
                 if (g_overlayRenderer.HasSwapchain(sc)) {
                     if (g_overlayRenderer.RenderHud(gfxQueue, queue, gfxQFam, presentQFam,
