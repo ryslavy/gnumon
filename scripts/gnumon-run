@@ -13,10 +13,17 @@ while [ $# -gt 0 ]; do
             export GNUMON_GL=1
             shift
             ;;
+        --zink)
+            export GNUMON_ZINK=1
+            export MESA_LOADER_DRIVER_OVERRIDE=zink
+            export GNUMON_OVERLAY=1
+            shift
+            ;;
         -h|--help)
-            echo "Usage: gnumon-run [--overlay|--hud] [--gl] <command> [args...]"
-            echo "Example for Steam: gnumon-run --overlay %command%"
-            echo "Example (env): GNUMON_OVERLAY=1 gnumon-run %command%"
+            echo "Usage: gnumon-run [--overlay|--hud] [--gl] [--zink] <command> [args...]"
+            echo "Example for Steam (Vulkan/Proton): gnumon-run --overlay %command%"
+            echo "Example for OpenGL (Native):       gnumon-run --gl %command%"
+            echo "Example for OpenGL via Zink:       gnumon-run --zink %command%"
             echo "Example: gnumon-run vkcube"
             exit 0
             ;;
@@ -30,9 +37,8 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -eq 0 ]; then
-    echo "Usage: gnumon-run [--overlay|--hud] [--gl] <command> [args...]"
+    echo "Usage: gnumon-run [--overlay|--hud] [--gl] [--zink] <command> [args...]"
     echo "Example for Steam: gnumon-run --overlay %command%"
-    echo "Example (env): GNUMON_OVERLAY=1 gnumon-run %command%"
     echo "Example: gnumon-run vkcube"
     exit 1
 fi
@@ -70,39 +76,43 @@ fi
 unset QT_PLUGIN_PATH
 unset QT_QPA_PLATFORM
 
-# Always activate Vulkan implicit layer
-export ENABLE_GNUMON=1
-export VK_INSTANCE_LAYERS="VK_LAYER_GNUMON_capture${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}"
-
-# Ensure user Vulkan layer directory is searched
+# Pure implicit layer activation (automatically picked up by Vulkan loader)
 USER_IMPLICIT_DIR="$HOME/.local/share/vulkan/implicit_layer.d"
-USER_EXPLICIT_DIR="$HOME/.local/share/vulkan/explicit_layer.d"
 USER_LIB_DIR="$HOME/.local/lib/gnumon"
 
-for d in "$USER_IMPLICIT_DIR" "$USER_EXPLICIT_DIR" "$USER_LIB_DIR"; do
+for d in "$USER_IMPLICIT_DIR" "$USER_LIB_DIR"; do
     if [ -d "$d" ]; then
         export VK_LAYER_PATH="$d${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
     fi
 done
 
-if [ ! -f "$USER_IMPLICIT_DIR/VkLayer_gnumon.json" ] && [ ! -f "$USER_EXPLICIT_DIR/VkLayer_gnumon.json" ]; then
-    echo "[gnumon-run] Note: Vulkan layer is not yet installed in ~/.local/share/vulkan." >&2
-    echo "[gnumon-run] Launch gnumon GUI and click 'Install Layer' or run 'install-layers.sh'." >&2
+if [ ! -f "$USER_IMPLICIT_DIR/VkLayer_gnumon.json" ]; then
+    echo "[gnumon-run] Note: Vulkan layer is not yet installed in ~/.local/share/vulkan/implicit_layer.d." >&2
+    echo "[gnumon-run] Launch gnumon GUI and click 'Install Layers & Setup' or run 'install-layers.sh'." >&2
 fi
 
-# OpenGL LD_PRELOAD handling:
+# OpenGL LD_PRELOAD handling (64-bit and 32-bit multilib):
 # Only activate for native OpenGL if explicitly requested via GNUMON_GL=1 or --gl
-# to avoid breaking Steam 32-bit wrappers or Proton container processes.
 if [ "${GNUMON_GL:-0}" = "1" ]; then
     LIB_GL=""
+    LIB32_GL=""
     for p in "$HOME/.local/lib/gnumon" "/usr/local/lib" "/usr/lib" "$SCRIPT_DIR" "$SCRIPT_DIR/../build-host"; do
         if [ -f "$p/libgnumon_gl.so" ]; then
             LIB_GL="$p/libgnumon_gl.so"
             break
         fi
     done
-    if [ -n "$LIB_GL" ]; then
-        export LD_PRELOAD="$LIB_GL${LD_PRELOAD:+:$LD_PRELOAD}"
+    for p in "$HOME/.local/lib/gnumon/lib32" "/usr/local/lib32" "/usr/lib32" "$SCRIPT_DIR/lib32" "$SCRIPT_DIR/../build-host/lib32"; do
+        if [ -f "$p/libgnumon_gl.so" ]; then
+            LIB32_GL="$p/libgnumon_gl.so"
+            break
+        fi
+    done
+    PRELOADS=""
+    [ -n "$LIB_GL" ] && PRELOADS="$LIB_GL"
+    [ -n "$LIB32_GL" ] && PRELOADS="${PRELOADS:+$PRELOADS:}$LIB32_GL"
+    if [ -n "$PRELOADS" ]; then
+        export LD_PRELOAD="$PRELOADS${LD_PRELOAD:+:$LD_PRELOAD}"
     fi
 fi
 

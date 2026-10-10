@@ -97,6 +97,7 @@ private:
     QPushButton *btnInstallUdev_ = nullptr;
     QLabel *lblLayersStatus_ = nullptr;
     QPushButton *btnInstallLayers_ = nullptr;
+    bool layersInstalled_ = false;
     QLabel *lblSystemFeedback_ = nullptr;
     QTimer *serviceTimer_ = nullptr;
 };

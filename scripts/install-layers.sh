@@ -34,9 +34,12 @@ fi
 DEST_LIB="$HOME/.local/lib/gnumon"
 DEST_BIN="$HOME/.local/bin"
 DEST_IMPLICIT="$HOME/.local/share/vulkan/implicit_layer.d"
-DEST_EXPLICIT="$HOME/.local/share/vulkan/explicit_layer.d"
 
-mkdir -p "$DEST_LIB" "$DEST_BIN" "$DEST_IMPLICIT" "$DEST_EXPLICIT"
+mkdir -p "$DEST_LIB" "$DEST_BIN" "$DEST_IMPLICIT"
+
+# Clean any legacy explicit layer manifests to ensure purely implicit operation
+rm -f "$HOME/.local/share/vulkan/explicit_layer.d"/VkLayer_gnumon*.json 2>/dev/null || true
+rm -f "$HOME/.local/share/vulkan/explicit_layer.d/libVkLayer_gnumon.so" 2>/dev/null || true
 
 echo "==> Copying libraries to $DEST_LIB..."
 cp -f "$LIB_DIR"/libVkLayer_gnumon.so "$DEST_LIB/"
@@ -62,9 +65,9 @@ elif [ -f "$BIN_DIR/gnumon-run" ]; then
 fi
 chmod +x "$DEST_BIN/gnumon-run" 2>/dev/null || true
 
-echo "==> Generating Vulkan Layer manifests..."
+echo "==> Generating Purely Implicit Vulkan Layer manifests..."
 
-# 1. Implicit Layer (active when ENABLE_GNUMON=1)
+# 1. 64-bit Implicit Layer (automatic injection for all Vulkan/Wine/Proton/Zink games unless DISABLE_GNUMON=1)
 cat <<EOF > "$DEST_IMPLICIT/VkLayer_gnumon.json"
 {
     "file_format_version" : "1.0.0",
@@ -99,43 +102,9 @@ cat <<EOF > "$DEST_IMPLICIT/VkLayer_gnumon.json"
 }
 EOF
 
-# 2. Explicit Layer (active when explicitly named in VK_INSTANCE_LAYERS)
-cat <<EOF > "$DEST_EXPLICIT/VkLayer_gnumon.json"
-{
-    "file_format_version" : "1.0.0",
-    "layer" : {
-        "name": "VK_LAYER_GNUMON_capture",
-        "type": "GLOBAL",
-        "library_path": "$DEST_LIB/libVkLayer_gnumon.so",
-        "api_version": "1.3.0",
-        "implementation_version": "1",
-        "description": "gnumon Linux PresentMon frame capture layer",
-        "functions": {
-            "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
-        },
-        "device_extensions": [
-            {
-                "name": "VK_KHR_swapchain",
-                "spec_version": "70",
-                "entrypoints": [
-                    "vkCreateSwapchainKHR",
-                    "vkDestroySwapchainKHR",
-                    "vkGetSwapchainImagesKHR",
-                    "vkAcquireNextImageKHR",
-                    "vkQueuePresentKHR",
-                    "vkAcquireNextImage2KHR"
-                ]
-            }
-        ]
-    }
-}
-EOF
-
-# Copy layer library directly to implicit and explicit directories for reliable loader resolution
+# Copy layer library directly to implicit directory for fallback loader resolution
 cp -f "$DEST_LIB/libVkLayer_gnumon.so" "$DEST_IMPLICIT/"
-cp -f "$DEST_LIB/libVkLayer_gnumon.so" "$DEST_EXPLICIT/"
 cp -f "$DEST_IMPLICIT/VkLayer_gnumon.json" "$DEST_IMPLICIT/VkLayer_gnumon.x86_64.json"
-cp -f "$DEST_EXPLICIT/VkLayer_gnumon.json" "$DEST_EXPLICIT/VkLayer_gnumon.x86_64.json"
 
 # Check and copy 32-bit multilib layers (for 32-bit Proton / Wine games)
 LIB32_DIR=""
@@ -158,12 +127,7 @@ if [ -n "$LIB32_DIR" ]; then
     sed "s|\"$DEST_LIB/libVkLayer_gnumon.so\"|\"$DEST_LIB/lib32/libVkLayer_gnumon.so\"|g; s|\"gnumon Linux PresentMon frame capture layer\"|\"gnumon Linux PresentMon 32-bit frame capture layer\"|g" \
         "$DEST_IMPLICIT/VkLayer_gnumon.json" > "$DEST_IMPLICIT/VkLayer_gnumon.i686.json"
     cp -f "$DEST_IMPLICIT/VkLayer_gnumon.i686.json" "$DEST_IMPLICIT/VkLayer_gnumon.x86.json"
-
-    # 32-bit Explicit Layer Manifest
-    sed "s|\"$DEST_LIB/libVkLayer_gnumon.so\"|\"$DEST_LIB/lib32/libVkLayer_gnumon.so\"|g; s|\"gnumon Linux PresentMon frame capture layer\"|\"gnumon Linux PresentMon 32-bit frame capture layer\"|g" \
-        "$DEST_EXPLICIT/VkLayer_gnumon.json" > "$DEST_EXPLICIT/VkLayer_gnumon.i686.json"
-    cp -f "$DEST_EXPLICIT/VkLayer_gnumon.i686.json" "$DEST_EXPLICIT/VkLayer_gnumon.x86.json"
-    echo "==> 32-bit multilib Vulkan layer registered successfully!"
+    echo "==> 32-bit multilib Vulkan implicit layer registered successfully!"
 fi
 
 # Register layer into Flatpak Steam if present

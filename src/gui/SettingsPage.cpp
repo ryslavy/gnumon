@@ -861,10 +861,19 @@ void SettingsPage::RefreshServiceStatus() {
 
     bool vk64 = (statusMap.value("vulkan_64_installed") == "yes");
     bool vk32 = (statusMap.value("vulkan_32_installed") == "yes");
+    layersInstalled_ = (vk64 || vk32);
 
-    lblLayersStatus_->setText(QString("Vulkan Layers: %1 | 32-bit: %2")
-                                  .arg(vk64 ? "<span style='color:#00ff88;'>64-bit Ready</span>" : "<span style='color:#ff5555;'>64-bit Missing</span>")
-                                  .arg(vk32 ? "<span style='color:#00ff88;'>32-bit Ready</span>" : "<span style='color:#ffaa00;'>32-bit Not Installed</span>"));
+    lblLayersStatus_->setText(QString("Vulkan Implicit Layers: %1 | 32-bit: %2")
+                                  .arg(vk64 ? "<span style='color:#00ff88;'>64-bit Ready (Implicit)</span>" : "<span style='color:#ff5555;'>64-bit Missing</span>")
+                                  .arg(vk32 ? "<span style='color:#00ff88;'>32-bit Ready (Implicit)</span>" : "<span style='color:#ffaa00;'>32-bit Not Installed</span>"));
+
+    if (layersInstalled_) {
+        btnInstallLayers_->setText("Uninstall Layers & Service");
+        btnInstallLayers_->setStyleSheet("background-color: #c62828; color: white; padding: 6px 14px; border-radius: 4px; font-weight: bold;");
+    } else {
+        btnInstallLayers_->setText("Install / Update Implicit Layers");
+        btnInstallLayers_->setStyleSheet("background-color: #1565c0; color: white; padding: 6px 14px; border-radius: 4px; font-weight: bold;");
+    }
 }
 
 void SettingsPage::OnStartService() {
@@ -900,10 +909,17 @@ void SettingsPage::OnInstallUdevRules() {
 }
 
 void SettingsPage::OnInstallLayers() {
-    lblSystemFeedback_->setText("Installing / updating Vulkan layers...");
-    qApp->processEvents();
-    QString output = RunSetupCommand("install-layers");
-    lblSystemFeedback_->setText(output.trimmed().isEmpty() ? "Layers updated." : output.trimmed());
+    if (layersInstalled_) {
+        lblSystemFeedback_->setText("Uninstalling layers, services, and components...");
+        qApp->processEvents();
+        QString output = RunSetupCommand("uninstall-all");
+        lblSystemFeedback_->setText(output.trimmed().isEmpty() ? "Layers & services completely uninstalled." : output.trimmed());
+    } else {
+        lblSystemFeedback_->setText("Installing Vulkan implicit layers and tools...");
+        qApp->processEvents();
+        QString output = RunSetupCommand("install-layers");
+        lblSystemFeedback_->setText(output.trimmed().isEmpty() ? "Implicit layers installed." : output.trimmed());
+    }
     RefreshServiceStatus();
 }
 

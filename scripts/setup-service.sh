@@ -191,8 +191,47 @@ EOF
         exit 1
         ;;
 
+    uninstall-all)
+        echo "==> Completely uninstalling gnumon services, layers, and permissions..."
+        # 1. Stop and disable user daemon
+        systemctl --user stop gnumond.service 2>/dev/null || true
+        systemctl --user disable gnumond.service 2>/dev/null || true
+        rm -f "$HOME/.config/systemd/user/gnumond.service"
+        systemctl --user daemon-reload 2>/dev/null || true
+        killall -u "$USER" gnumond 2>/dev/null || true
+
+        # 2. Stop and disable system daemon if present
+        if systemctl is-active gnumond.service 1>/dev/null 2>&1 || [ -f "/etc/systemd/system/gnumond.service" ]; then
+            pkexec bash -c '
+                systemctl stop gnumond.service 2>/dev/null || true
+                systemctl disable gnumond.service 2>/dev/null || true
+                rm -f /etc/systemd/system/gnumond.service
+                systemctl daemon-reload
+            ' 2>/dev/null || true
+        fi
+
+        # 3. Remove udev input permissions if present
+        if [ -f "/etc/udev/rules.d/99-gnumon-input.rules" ]; then
+            pkexec bash -c '
+                rm -f /etc/udev/rules.d/99-gnumon-input.rules
+                udevadm control --reload-rules
+                udevadm trigger -s input -c change
+            ' 2>/dev/null || true
+        fi
+
+        # 4. Run uninstall-layers.sh
+        for s in "$SCRIPT_DIR/uninstall-layers.sh" "$ROOT_DIR/scripts/uninstall-layers.sh"; do
+            if [ -f "$s" ]; then
+                bash "$s"
+                break
+            fi
+        done
+
+        echo "==> gnumon services, layers, and permissions have been completely uninstalled!"
+        ;;
+
     *)
-        echo "Usage: $0 {status|enable-user|disable-user|start-user|stop-user|install-udev|install-system|install-layers}"
+        echo "Usage: $0 {status|enable-user|disable-user|start-user|stop-user|install-udev|install-system|install-layers|uninstall-all}"
         exit 1
         ;;
 esac

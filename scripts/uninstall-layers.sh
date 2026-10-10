@@ -33,6 +33,9 @@ rm -f "$DEST_BIN/gnumon-cli"
 rm -f "$DEST_BIN/gnumond"
 rm -f "$DEST_BIN/gnumon-gui"
 
+# Stop lingering processes
+killall -u "$USER" gnumond gnumon-cli 2>/dev/null || true
+
 # Shared memory rings
 rm -f /dev/shm/gnumon_* /dev/shm/gnumon_ring_* 2>/dev/null || true
 

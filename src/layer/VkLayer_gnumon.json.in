@@ -23,6 +23,9 @@
                     "vkAcquireNextImage2KHR"
                 ]
             }
-        ]
+        ],
+        "disable_environment": {
+            "DISABLE_GNUMON": "1"
+        }
     }
 }

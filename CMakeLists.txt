@@ -257,9 +257,6 @@ if(TARGET VkLayer_gnumon)
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_gnumon.json
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/vulkan/explicit_layer.d
-    )
-    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_gnumon.json
         DESTINATION ${CMAKE_INSTALL_DATADIR}/vulkan/implicit_layer.d
     )
 endif()
