@@ -9,6 +9,8 @@
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QSignalBlocker>
+#include "GuiUtils.h"
 #include <sys/utsname.h>
 
 namespace gnumon::gui {
@@ -506,6 +508,11 @@ QWidget* SettingsPage::CreateCapturePage() {
     auto *dirBox = new QHBoxLayout();
     txtCaptureDir_ = new QLineEdit(card);
     txtCaptureDir_->setText(config_->captureDirectory);
+    connect(txtCaptureDir_, &QLineEdit::editingFinished, this, [this]() {
+        config_->captureDirectory = txtCaptureDir_->text().trimmed();
+        config_->Save();
+        emit configChanged();
+    });
     auto *btnBrowse = new QPushButton("Browse...", card);
     btnBrowse->setStyleSheet("background-color: #242838; color: #fff; padding: 6px 14px; border-radius: 4px;");
     connect(btnBrowse, &QPushButton::clicked, this, &SettingsPage::OnBrowseCaptureDir);
@@ -553,7 +560,7 @@ QWidget* SettingsPage::CreateLoggingPage() {
     auto *btnOpenEtl = new QPushButton("OPEN IN EXPLORER", card);
     btnOpenEtl->setStyleSheet("background-color: #1976d2; color: #ffffff; border: none; border-radius: 4px; padding: 8px 20px; font-weight: bold;");
     connect(btnOpenEtl, &QPushButton::clicked, this, [this]() {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(config_->captureDirectory));
+        LaunchHostFileManager(config_->captureDirectory);
     });
     layout->addWidget(btnOpenEtl, row++, 1, Qt::AlignLeft);
 
@@ -746,33 +753,70 @@ QWidget* SettingsPage::CreateAboutPage() {
 
 void SettingsPage::ReloadFromConfig() {
     if (!config_) return;
+
+    const QSignalBlocker b1(swWindowed_);
+    const QSignalBlocker b2(swAutoDuringCapture_);
+    const QSignalBlocker b3(quadrantPos_);
+    const QSignalBlocker b4(sliderWidth_);
+    const QSignalBlocker b5(sliderTimeScale_);
+    const QSignalBlocker b6(swScaling_);
+    const QSignalBlocker b7(sliderScalingFactor_);
+    const QSignalBlocker b8(sliderDrawRate_);
+    const QSignalBlocker b9(sliderPollRate_);
+    const QSignalBlocker b10(sliderTelemPeriod_);
+    const QSignalBlocker b11(sliderWindowSize_);
+    const QSignalBlocker b12(swPerMetricDevice_);
+    const QSignalBlocker b13(swSummaryStats_);
+    const QSignalBlocker b14(swTargetBlockList_);
+    const QSignalBlocker b15(txtCaptureDir_);
+
     if (swWindowed_) swWindowed_->setChecked(config_->overlayWindowedMode);
-    swAutoDuringCapture_->setChecked(config_->overlayHideDuringCapture);
-    quadrantPos_->setPosition(config_->overlayCorner);
-    sliderWidth_->setValue(config_->overlayWidth);
-    lblWidthVal_->setText(QString::number(config_->overlayWidth));
-    sliderTimeScale_->setValue(static_cast<int>(config_->overlayTimeScale * 10));
-    lblTimeScaleVal_->setText(QString::number(config_->overlayTimeScale, 'f', 1));
-    swScaling_->setChecked(config_->overlayGraphicsScaling);
-    sliderScalingFactor_->setValue(static_cast<int>(config_->overlayScalingFactor * 10));
-    lblScalingVal_->setText(QString::number(config_->overlayScalingFactor, 'f', 1));
-    sliderDrawRate_->setValue(config_->overlayDrawRate);
-    lblDrawRateVal_->setText(QString::number(config_->overlayDrawRate));
-    btnColor_->setColor(config_->overlayBgColor);
+    if (swAutoDuringCapture_) swAutoDuringCapture_->setChecked(config_->overlayHideDuringCapture);
+    if (quadrantPos_) quadrantPos_->setPosition(config_->overlayCorner);
+    if (sliderWidth_) {
+        sliderWidth_->setValue(config_->overlayWidth);
+        lblWidthVal_->setText(QString::number(config_->overlayWidth));
+    }
+    if (sliderTimeScale_) {
+        sliderTimeScale_->setValue(static_cast<int>(config_->overlayTimeScale * 10));
+        lblTimeScaleVal_->setText(QString::number(config_->overlayTimeScale, 'f', 1));
+    }
+    if (swScaling_) swScaling_->setChecked(config_->overlayGraphicsScaling);
+    if (sliderScalingFactor_) {
+        sliderScalingFactor_->setValue(static_cast<int>(config_->overlayScalingFactor * 10));
+        sliderScalingFactor_->setEnabled(config_->overlayGraphicsScaling);
+        lblScalingVal_->setText(QString::number(config_->overlayScalingFactor, 'f', 1));
+    }
+    if (sliderDrawRate_) {
+        sliderDrawRate_->setValue(config_->overlayDrawRate);
+        lblDrawRateVal_->setText(QString::number(config_->overlayDrawRate));
+    }
+    if (btnColor_) btnColor_->setColor(config_->overlayBgColor);
 
-    sliderPollRate_->setValue(config_->dataPollingRate);
-    lblPollRateVal_->setText(QString::number(config_->dataPollingRate));
-    sliderTelemPeriod_->setValue(config_->dataTelemetryPeriod);
-    lblTelemPeriodVal_->setText(QString::number(config_->dataTelemetryPeriod));
-    sliderWindowSize_->setValue(config_->dataWindowSize);
-    lblWindowSizeVal_->setText(QString::number(config_->dataWindowSize));
-    swPerMetricDevice_->setChecked(config_->dataPerMetricDevice);
+    if (sliderPollRate_) {
+        sliderPollRate_->setValue(config_->dataPollingRate);
+        lblPollRateVal_->setText(QString::number(config_->dataPollingRate));
+    }
+    if (sliderTelemPeriod_) {
+        sliderTelemPeriod_->setValue(config_->dataTelemetryPeriod);
+        lblTelemPeriodVal_->setText(QString::number(config_->dataTelemetryPeriod));
+    }
+    if (sliderWindowSize_) {
+        sliderWindowSize_->setValue(config_->dataWindowSize);
+        lblWindowSizeVal_->setText(QString::number(config_->dataWindowSize));
+    }
+    if (swPerMetricDevice_) swPerMetricDevice_->setChecked(config_->dataPerMetricDevice);
 
-    swSummaryStats_->setChecked(config_->captureSummaryStats);
-    swTargetBlockList_->setChecked(config_->captureTargetBlockList);
-    txtCaptureDir_->setText(config_->captureDirectory);
+    if (swSummaryStats_) swSummaryStats_->setChecked(config_->captureSummaryStats);
+    if (swTargetBlockList_) swTargetBlockList_->setChecked(config_->captureTargetBlockList);
 
-    SetCurrentTab(0);
+    QString capDir = config_->captureDirectory;
+    if (capDir.isEmpty()) {
+        QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (docs.isEmpty()) docs = QDir::homePath() + "/Documents";
+        capDir = docs + "/gnumon/captures";
+    }
+    if (txtCaptureDir_) txtCaptureDir_->setText(capDir);
 }
 
 void SettingsPage::OnResetPreferences() {
@@ -784,10 +828,17 @@ void SettingsPage::OnResetPreferences() {
 }
 
 void SettingsPage::OnBrowseCaptureDir() {
-    QString dir = QFileDialog::getExistingDirectory(this, "Select Capture Directory", config_->captureDirectory);
+    QString startDir = config_->captureDirectory;
+    if (startDir.isEmpty()) {
+        QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (docs.isEmpty()) docs = QDir::homePath() + "/Documents";
+        startDir = docs + "/gnumon/captures";
+    }
+    QDir().mkpath(startDir);
+    QString dir = QFileDialog::getExistingDirectory(this, "Select Capture Directory", startDir, QFileDialog::ShowDirsOnly);
     if (!dir.isEmpty()) {
         config_->captureDirectory = dir;
-        txtCaptureDir_->setText(dir);
+        if (txtCaptureDir_) txtCaptureDir_->setText(dir);
         config_->Save();
         emit configChanged();
     }

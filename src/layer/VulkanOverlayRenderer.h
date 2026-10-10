@@ -447,6 +447,14 @@ private:
                 return i;
             }
         }
+        if (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+            for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+                if ((typeFilter & (1 << i)) &&
+                    (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+                    return i;
+                }
+            }
+        }
         for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
             if (typeFilter & (1 << i)) {
                 return i;
@@ -458,13 +466,22 @@ private:
     void CreateFontTexture() {
         const uint32_t tex_w = FONT_TEX_W;
         const uint32_t tex_h = FONT_TEX_H;
+        const size_t rgbaSize = tex_w * tex_h * 4;
+        std::vector<uint8_t> rgba(rgbaSize);
+        for (size_t i = 0; i < tex_w * tex_h; ++i) {
+            uint8_t a = font_atlas_bitmap[i];
+            rgba[i * 4 + 0] = a;
+            rgba[i * 4 + 1] = a;
+            rgba[i * 4 + 2] = a;
+            rgba[i * 4 + 3] = a;
+        }
 
         VkBuffer stgBuf = VK_NULL_HANDLE;
         VkDeviceMemory stgMem = VK_NULL_HANDLE;
 
         VkBufferCreateInfo stgInfo{};
         stgInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        stgInfo.size = sizeof(font_atlas_bitmap);
+        stgInfo.size = rgbaSize;
         stgInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         createBuffer_(device_, &stgInfo, nullptr, &stgBuf);
 
@@ -480,14 +497,22 @@ private:
         bindBufferMemory_(device_, stgBuf, stgMem, 0);
 
         void* data = nullptr;
-        mapMemory_(device_, stgMem, 0, sizeof(font_atlas_bitmap), 0, &data);
-        memcpy(data, font_atlas_bitmap, sizeof(font_atlas_bitmap));
+        mapMemory_(device_, stgMem, 0, rgbaSize, 0, &data);
+        memcpy(data, rgba.data(), rgbaSize);
+        if (flushMappedMemoryRanges_) {
+            VkMappedMemoryRange range{};
+            range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            range.memory = stgMem;
+            range.offset = 0;
+            range.size = VK_WHOLE_SIZE;
+            flushMappedMemoryRanges_(device_, 1, &range);
+        }
         unmapMemory_(device_, stgMem);
 
         VkImageCreateInfo imgInfo{};
         imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         imgInfo.imageType = VK_IMAGE_TYPE_2D;
-        imgInfo.format = VK_FORMAT_R8_UNORM;
+        imgInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
         imgInfo.extent = {tex_w, tex_h, 1};
         imgInfo.mipLevels = 1;
         imgInfo.arrayLayers = 1;
@@ -570,7 +595,7 @@ private:
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = fontImage_;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = VK_FORMAT_R8_UNORM;
+        viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         createImageView_(device_, &viewInfo, nullptr, &fontView_);
 
@@ -578,9 +603,12 @@ private:
         samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
         samplerInfo.magFilter = VK_FILTER_LINEAR;
         samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
         samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = 0.0f;
         createSampler_(device_, &samplerInfo, nullptr, &fontSampler_);
 
         VkDescriptorSetLayoutBinding binding{};

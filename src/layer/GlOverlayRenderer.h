@@ -104,13 +104,37 @@ public:
         if (p_glGenTextures && p_glBindTexture && p_glTexImage2D && p_glTexParameteri) {
             p_glGenTextures(1, &fontTexture_);
             GLint lastTex = 0;
-            p_glGetIntegerv(GL_TEXTURE_BINDING_2D, &lastTex);
+            GLint lastPixelUnpackBuf = 0;
+            GLint lastUnpackAlign = 4;
+            GLint lastUnpackRowLen = 0;
+            if (p_glGetIntegerv) {
+                p_glGetIntegerv(GL_TEXTURE_BINDING_2D, &lastTex);
+                p_glGetIntegerv(0x88EC /* GL_PIXEL_UNPACK_BUFFER_BINDING */, &lastPixelUnpackBuf);
+                p_glGetIntegerv(0x0CF5 /* GL_UNPACK_ALIGNMENT */, &lastUnpackAlign);
+                p_glGetIntegerv(0x0CF2 /* GL_UNPACK_ROW_LENGTH */, &lastUnpackRowLen);
+            }
+            if (p_glBindBuffer && lastPixelUnpackBuf != 0) {
+                p_glBindBuffer(0x88EC /* GL_PIXEL_UNPACK_BUFFER */, 0);
+            }
+            if (p_glPixelStorei) {
+                p_glPixelStorei(0x0CF5 /* GL_UNPACK_ALIGNMENT */, 1);
+                p_glPixelStorei(0x0CF2 /* GL_UNPACK_ROW_LENGTH */, 0);
+            }
+
             p_glBindTexture(GL_TEXTURE_2D, fontTexture_);
             p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, FONT_TEX_W, FONT_TEX_H, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+
+            if (p_glPixelStorei) {
+                p_glPixelStorei(0x0CF5, lastUnpackAlign);
+                p_glPixelStorei(0x0CF2, lastUnpackRowLen);
+            }
+            if (p_glBindBuffer && lastPixelUnpackBuf != 0) {
+                p_glBindBuffer(0x88EC, lastPixelUnpackBuf);
+            }
             p_glBindTexture(GL_TEXTURE_2D, lastTex);
         }
 
@@ -372,6 +396,7 @@ private:
         p_glDeleteTextures = reinterpret_cast<PFN_glDeleteTextures>(dlsym(RTLD_DEFAULT, "glDeleteTextures"));
         p_glTexParameteri = reinterpret_cast<PFN_glTexParameteri>(dlsym(RTLD_DEFAULT, "glTexParameteri"));
         p_glTexImage2D = reinterpret_cast<PFN_glTexImage2D>(dlsym(RTLD_DEFAULT, "glTexImage2D"));
+        p_glPixelStorei = reinterpret_cast<PFN_glPixelStorei>(dlsym(RTLD_DEFAULT, "glPixelStorei"));
         p_glDrawArrays = reinterpret_cast<PFN_glDrawArrays>(dlsym(RTLD_DEFAULT, "glDrawArrays"));
 
         // Shaders & VBO
@@ -472,6 +497,8 @@ private:
     PFN_glDeleteTextures p_glDeleteTextures = nullptr;
     PFN_glTexParameteri p_glTexParameteri = nullptr;
     PFN_glTexImage2D p_glTexImage2D = nullptr;
+    typedef void (*PFN_glPixelStorei)(GLenum pname, GLint param);
+    PFN_glPixelStorei p_glPixelStorei = nullptr;
     PFN_glDrawArrays p_glDrawArrays = nullptr;
 
     PFN_glCreateShader p_glCreateShader = nullptr;

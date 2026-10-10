@@ -207,44 +207,39 @@ private:
         ScanEvdev(nowNs);
         if (evdevFds_.empty()) return;
 
-        bool anyOverlayDown = false;
-        bool anyPresetDown = false;
-        bool anyCaptureDown = false;
-
+        uint8_t keyStates[(KEY_MAX + 7) / 8]{};
         for (int efd : evdevFds_) {
-            // Drain event buffer
-            struct input_event iev[16];
-            while (read(efd, iev, sizeof(iev)) > 0) {}
-
-            uint8_t keyStates[(KEY_MAX + 7) / 8]{};
-            if (ioctl(efd, EVIOCGKEY(sizeof(keyStates)), keyStates) < 0) {
-                continue;
+            uint8_t devKeyStates[(KEY_MAX + 7) / 8]{};
+            if (ioctl(efd, EVIOCGKEY(sizeof(devKeyStates)), devKeyStates) >= 0) {
+                for (size_t i = 0; i < sizeof(keyStates); ++i) {
+                    keyStates[i] |= devKeyStates[i];
+                }
             }
-
-            auto isDown = [&](int k) -> bool {
-                if (k <= 0 || k > KEY_MAX) return false;
-                return (keyStates[k / 8] & (1 << (k % 8))) != 0;
-            };
-
-            bool cDown = isDown(KEY_LEFTCTRL) || isDown(KEY_RIGHTCTRL);
-            bool sDown = isDown(KEY_LEFTSHIFT) || isDown(KEY_RIGHTSHIFT);
-            bool aDown = isDown(KEY_LEFTALT) || isDown(KEY_RIGHTALT);
-
-            auto testChord = [&](const HotkeyChord& chord, int fb1, int fb2 = 0) -> bool {
-                if (fb1 > 0 && isDown(fb1)) return true;
-                if (fb2 > 0 && isDown(fb2)) return true;
-                if (chord.evdevKey <= 0) return false;
-                if (!isDown(chord.evdevKey)) return false;
-                if (chord.ctrl && !cDown) return false;
-                if (chord.shift && !sDown) return false;
-                if (chord.alt && !aDown) return false;
-                return true;
-            };
-
-            if (testChord(chordOverlay_, KEY_F9)) anyOverlayDown = true;
-            if (testChord(chordPreset_, KEY_F8, KEY_F11)) anyPresetDown = true;
-            if (testChord(chordCapture_, KEY_F10)) anyCaptureDown = true;
         }
+
+        auto isDown = [&](int k) -> bool {
+            if (k <= 0 || k > KEY_MAX) return false;
+            return (keyStates[k / 8] & (1 << (k % 8))) != 0;
+        };
+
+        bool cDown = isDown(KEY_LEFTCTRL) || isDown(KEY_RIGHTCTRL);
+        bool sDown = isDown(KEY_LEFTSHIFT) || isDown(KEY_RIGHTSHIFT);
+        bool aDown = isDown(KEY_LEFTALT) || isDown(KEY_RIGHTALT);
+
+        auto testChord = [&](const HotkeyChord& chord, int fb1, int fb2 = 0) -> bool {
+            if (fb1 > 0 && isDown(fb1)) return true;
+            if (fb2 > 0 && isDown(fb2)) return true;
+            if (chord.evdevKey <= 0) return false;
+            if (!isDown(chord.evdevKey)) return false;
+            if (chord.ctrl && !cDown) return false;
+            if (chord.shift && !sDown) return false;
+            if (chord.alt && !aDown) return false;
+            return true;
+        };
+
+        bool anyOverlayDown = testChord(chordOverlay_, KEY_F9);
+        bool anyPresetDown = testChord(chordPreset_, KEY_F8, KEY_F11);
+        bool anyCaptureDown = testChord(chordCapture_, KEY_F10);
 
         if (anyOverlayDown && !wasEvdevOverlay_) {
             out.toggleOverlay = true;

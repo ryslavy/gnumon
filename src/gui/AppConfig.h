@@ -588,6 +588,7 @@ struct AppConfig {
         s.endGroup();
 
         s.beginGroup("Loadout");
+        s.remove("");
         s.setValue("widgetCount", loadout.widgets.size());
         for (int i = 0; i < loadout.widgets.size(); ++i) {
             const auto& w = loadout.widgets[i];

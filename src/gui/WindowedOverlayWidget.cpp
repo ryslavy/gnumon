@@ -1,6 +1,7 @@
 #include "WindowedOverlayWidget.h"
 #include <QPainterPath>
 #include <QFontDatabase>
+#include <QWindow>
 #include <cmath>
 #include <algorithm>
 #include "../../include/gnumon/PresentMonAPI.h"
@@ -8,11 +9,10 @@
 namespace gnumon::gui {
 
 WindowedOverlayWidget::WindowedOverlayWidget(AppConfig *config, QWidget *parent)
-    : QWidget(parent, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
+    : QWidget(parent, Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
       config_(config)
 {
-    setAttribute(Qt::WA_TranslucentBackground);
-    setAttribute(Qt::WA_ShowWithoutActivating);
+    setAttribute(Qt::WA_TranslucentBackground, true);
     setWindowTitle("gnumon Overlay (Windowed)");
 
     ReloadLayout();
@@ -418,16 +418,20 @@ void WindowedOverlayWidget::paintEvent(QPaintEvent *) {
 
 void WindowedOverlayWidget::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
-        // Check if clicked close button 'X' (top right ~25px)
-        if (event->pos().x() >= width() - 30 && event->pos().y() <= 30) {
+        // Check if clicked close button 'X' (top right ~32px)
+        if (event->pos().x() >= width() - 32 && event->pos().y() <= 32) {
             config_->overlayWindowedMode = false;
             config_->Save();
             hide();
             emit windowedClosed();
             return;
         }
-        dragging_ = true;
-        dragPosition_ = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        if (windowHandle()) {
+            windowHandle()->startSystemMove();
+        } else {
+            dragging_ = true;
+            dragPosition_ = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        }
         event->accept();
     }
 }

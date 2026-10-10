@@ -358,25 +358,30 @@ void MainViewWidget::SetupUi() {
 
 void MainViewWidget::ReloadFromConfig() {
     if (!config_) return;
-    swAutoTarget_->setChecked(config_->autoTarget);
+    {
+        QSignalBlocker b1(swAutoTarget_);
+        swAutoTarget_->setChecked(config_->autoTarget);
+    }
     comboProcess_->setEnabled(!config_->autoTarget);
     hpOverlay_->setHotkey(config_->hotkeyOverlay);
     hpPresetCycle_->setHotkey(config_->hotkeyPresetCycle);
     hpCapture_->setHotkey(config_->hotkeyCapture);
-    swDuration_->setChecked(config_->enableCaptureDuration);
-    spinDuration_->setValue(config_->captureDurationSeconds);
+    {
+        QSignalBlocker b2(swDuration_);
+        swDuration_->setChecked(config_->enableCaptureDuration);
+    }
+    {
+        QSignalBlocker b3(spinDuration_);
+        spinDuration_->setValue(config_->captureDurationSeconds);
+    }
     spinDuration_->setEnabled(config_->enableCaptureDuration);
 
     int pIdx = config_->selectedPreset;
     if (pIdx == 1000) pIdx = 4; // Custom
-    OnPresetButtonClicked(pIdx);
+    UpdatePresetButtonStyles(pIdx);
 }
 
-void MainViewWidget::OnPresetButtonClicked(int idx) {
-    int configPreset = (idx == 4) ? 1000 : idx;
-    config_->ApplyPreset(configPreset);
-    config_->Save();
-
+void MainViewWidget::UpdatePresetButtonStyles(int idx) {
     for (int i = 0; i < presetButtons_.size(); ++i) {
         if (i == idx) {
             presetButtons_[i]->setStyleSheet(
@@ -408,7 +413,13 @@ void MainViewWidget::OnPresetButtonClicked(int idx) {
             );
         }
     }
+}
 
+void MainViewWidget::OnPresetButtonClicked(int idx) {
+    int configPreset = (idx == 4) ? 1000 : idx;
+    config_->ApplyPreset(configPreset);
+    config_->Save();
+    UpdatePresetButtonStyles(idx);
     emit configChanged();
 }
 

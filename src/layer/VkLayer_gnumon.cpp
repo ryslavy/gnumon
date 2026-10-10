@@ -176,6 +176,7 @@ static int GetConfiguredHudPreset() {
 }
 
 static bool g_enableOverlay = GetConfiguredHudDefault();
+static bool g_lastProducerOverlay = GetConfiguredHudDefault();
 static int g_hudCorner = GetConfiguredHudCorner();
 thread_local uint64_t g_currentCpuStartNs = 0;
 thread_local bool g_hasAcquiredImage = false;
@@ -450,6 +451,10 @@ static VKAPI_ATTR void VKAPI_CALL gnumon_vkDestroyDevice(
             destroyDevice = it->second.destroyDevice;
             g_deviceDispatch.erase(it);
         }
+    }
+
+    if (g_overlayRenderer.GetDevice() == device) {
+        g_overlayRenderer.Cleanup();
     }
 
     if (destroyDevice) {
@@ -820,6 +825,7 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
     if (ev.toggleOverlay) {
         g_enableOverlay = !g_enableOverlay;
         g_producer.SetOverlayEnabled(g_enableOverlay);
+        g_lastProducerOverlay = g_enableOverlay;
         g_overlayRenderer.TriggerToast("In-Game Overlay", g_enableOverlay ? "ENABLED" : "DISABLED", 2.0f);
         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
             fprintf(stderr, "[gnumon-layer] In-game hotkey pressed! In-Game HUD: %s\n",
@@ -844,11 +850,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
 {
     uint64_t presentStartNs = gnumon::common::Clock::GetTimestampNs();
     CheckInGameHotkeys(presentStartNs);
-    static bool lastProducerOverlay = g_enableOverlay;
     bool currentProducerOverlay = g_producer.IsOverlayEnabled();
-    if (currentProducerOverlay != lastProducerOverlay) {
+    if (currentProducerOverlay != g_lastProducerOverlay) {
         g_enableOverlay = currentProducerOverlay;
-        lastProducerOverlay = currentProducerOverlay;
+        g_lastProducerOverlay = currentProducerOverlay;
     }
     bool overlayActive = g_enableOverlay || g_overlayRenderer.HasActiveToast();
     bool isRec = g_producer.IsRecordingActive();

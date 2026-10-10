@@ -40,6 +40,7 @@ private slots:
 private:
     void SetupUi();
     QWidget* CreateCard();
+    void UpdatePresetButtonStyles(int idx);
 
     AppConfig *config_ = nullptr;
     uint32_t selectedPid_ = 0;

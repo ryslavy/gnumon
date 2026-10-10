@@ -102,9 +102,11 @@ cat <<EOF > "$DEST_IMPLICIT/VkLayer_gnumon.json"
 }
 EOF
 
+# Clean any duplicate or legacy manifests
+rm -f "$DEST_IMPLICIT/VkLayer_gnumon.x86_64.json" "$DEST_IMPLICIT/VkLayer_gnumon.x86.json" 2>/dev/null || true
+
 # Copy layer library directly to implicit directory for fallback loader resolution
 cp -f "$DEST_LIB/libVkLayer_gnumon.so" "$DEST_IMPLICIT/"
-cp -f "$DEST_IMPLICIT/VkLayer_gnumon.json" "$DEST_IMPLICIT/VkLayer_gnumon.x86_64.json"
 
 # Check and copy 32-bit multilib layers (for 32-bit Proton / Wine games)
 LIB32_DIR=""
@@ -124,9 +126,8 @@ if [ -n "$LIB32_DIR" ]; then
     fi
 
     # 32-bit Implicit Layer Manifest
-    sed "s|\"$DEST_LIB/libVkLayer_gnumon.so\"|\"$DEST_LIB/lib32/libVkLayer_gnumon.so\"|g; s|\"gnumon Linux PresentMon frame capture layer\"|\"gnumon Linux PresentMon 32-bit frame capture layer\"|g" \
+    sed "s|\"$DEST_LIB/libVkLayer_gnumon.so\"|\"$DEST_LIB/lib32/libVkLayer_gnumon.so\"|g; s|\"VK_LAYER_GNUMON_capture\"|\"VK_LAYER_GNUMON_capture_32\"|g; s|\"gnumon Linux PresentMon frame capture layer\"|\"gnumon Linux PresentMon 32-bit frame capture layer\"|g" \
         "$DEST_IMPLICIT/VkLayer_gnumon.json" > "$DEST_IMPLICIT/VkLayer_gnumon.i686.json"
-    cp -f "$DEST_IMPLICIT/VkLayer_gnumon.i686.json" "$DEST_IMPLICIT/VkLayer_gnumon.x86.json"
     echo "==> 32-bit multilib Vulkan implicit layer registered successfully!"
 fi
 

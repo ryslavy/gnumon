@@ -112,11 +112,15 @@ static int GetConfiguredHudPreset() {
 }
 
 static bool g_enableOverlay = GetConfiguredHudDefault();
+static bool g_lastProducerOverlay = GetConfiguredHudDefault();
 static int g_hudCorner = GetConfiguredHudCorner();
 
 void EnsureInit() {
     if (!g_glInit.exchange(true)) {
         g_glProducer.Open(getpid());
+        if (g_enableOverlay) {
+            g_glProducer.SetOverlayEnabled(true);
+        }
         g_glOverlay.SetPreset(GetConfiguredHudPreset());
     }
 }
@@ -140,6 +144,7 @@ static void CheckInGameHotkeys(uint64_t nowNs) {
     if (ev.toggleOverlay) {
         g_enableOverlay = !g_enableOverlay;
         g_glProducer.SetOverlayEnabled(g_enableOverlay);
+        g_lastProducerOverlay = g_enableOverlay;
         g_glOverlay.TriggerToast("In-Game Overlay", g_enableOverlay ? "ENABLED" : "DISABLED", 2.0f);
         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
             fprintf(stderr, "[gnumon-gl] In-game hotkey pressed! In-Game HUD: %s\n",
@@ -162,11 +167,10 @@ void PreSwapHook(uint64_t nowNs) {
     EnsureInit();
     CheckInGameHotkeys(nowNs);
 
-    static bool lastProducerOverlay = g_enableOverlay;
     bool currentProducerOverlay = g_glProducer.IsOverlayEnabled();
-    if (currentProducerOverlay != lastProducerOverlay) {
+    if (currentProducerOverlay != g_lastProducerOverlay) {
         g_enableOverlay = currentProducerOverlay;
-        lastProducerOverlay = currentProducerOverlay;
+        g_lastProducerOverlay = currentProducerOverlay;
     }
 
     // Query active OpenGL Viewport dimensions

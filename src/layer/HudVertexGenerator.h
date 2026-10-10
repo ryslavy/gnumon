@@ -330,11 +330,18 @@ public:
                     try { configuredCorner_ = std::stoi(val); } catch (...) {}
                 } else if (key == "width") {
                     try { configuredWidth_ = std::stof(val); } catch (...) {}
+                } else if (key == "inGameHudPreset") {
+                    try { hudPreset_ = std::clamp(std::stoi(val), 0, 2); } catch (...) {}
+                } else if (key == "bgColor") {
+                    ParseColorHex(val, bgR_, bgG_, bgB_, bgA_);
+                    hasCustomBgColor_ = true;
                 }
             } else if (currentGroup == "Loadout") {
                 if (key == "widgetCount") {
-                    try { widgetCount = std::stoi(val); } catch (...) {}
-                    if (widgetCount > 0) loadedWidgets.resize(widgetCount);
+                    try {
+                        widgetCount = std::stoi(val);
+                        if (widgetCount > (int)loadedWidgets.size()) loadedWidgets.resize(widgetCount);
+                    } catch (...) {}
                 } else if (key.rfind("w", 0) == 0) {
                     // Format: w<i>_<property> or w<i>l<j>_<property>
                     size_t us = key.find('_');
@@ -343,10 +350,11 @@ public:
                         std::string prop = key.substr(us + 1);
                         size_t lPos = idxStr.find('l');
                         if (lPos == std::string::npos) {
-                            // Widget level property
+                            // Widget level property: w<i>_<property>
                             try {
                                 int wIdx = std::stoi(idxStr);
-                                if (wIdx >= 0 && wIdx < (int)loadedWidgets.size()) {
+                                if (wIdx >= 0) {
+                                    if (wIdx >= (int)loadedWidgets.size()) loadedWidgets.resize(wIdx + 1);
                                     if (prop == "type") loadedWidgets[wIdx].isGraph = (val == "graph");
                                     else if (prop == "graphType") loadedWidgets[wIdx].isHistogram = (val == "histogram");
                                     else if (prop == "rangeMin") loadedWidgets[wIdx].rangeMin = std::stof(val);
@@ -354,19 +362,18 @@ public:
                                     else if (prop == "autoScale") loadedWidgets[wIdx].autoScale = (val == "true" || val == "1");
                                     else if (prop == "lineCount") {
                                         int lc = std::stoi(val);
-                                        if (lc > 0) loadedWidgets[wIdx].lines.resize(lc);
+                                        if (lc > (int)loadedWidgets[wIdx].lines.size()) loadedWidgets[wIdx].lines.resize(lc);
                                     }
                                 }
                             } catch (...) {}
                         } else {
-                            // Line level property: w<i>l<j>
+                            // Line level property: w<i>l<j>_<property>
                             try {
                                 int wIdx = std::stoi(idxStr.substr(0, lPos));
                                 int lIdx = std::stoi(idxStr.substr(lPos + 1));
-                                if (wIdx >= 0 && wIdx < (int)loadedWidgets.size()) {
-                                    if (lIdx >= (int)loadedWidgets[wIdx].lines.size()) {
-                                        loadedWidgets[wIdx].lines.resize(lIdx + 1);
-                                    }
+                                if (wIdx >= 0 && lIdx >= 0) {
+                                    if (wIdx >= (int)loadedWidgets.size()) loadedWidgets.resize(wIdx + 1);
+                                    if (lIdx >= (int)loadedWidgets[wIdx].lines.size()) loadedWidgets[wIdx].lines.resize(lIdx + 1);
                                     auto& line = loadedWidgets[wIdx].lines[lIdx];
                                     if (prop == "metricId") {
                                         line.metricId = std::stoi(val);
@@ -386,7 +393,18 @@ public:
             }
         }
 
-        if (!loadedWidgets.empty()) {
+        if (widgetCount > 0 && (int)loadedWidgets.size() > widgetCount) {
+            loadedWidgets.resize(widgetCount);
+        }
+
+        bool hasValidWidgets = false;
+        for (const auto& w : loadedWidgets) {
+            if (!w.lines.empty()) {
+                hasValidWidgets = true;
+                break;
+            }
+        }
+        if (hasValidWidgets) {
             activeWidgets_ = std::move(loadedWidgets);
         }
     }
@@ -669,7 +687,11 @@ public:
         // Card backdrop + top glow border
         AddQuad(verts, cardX - 2.0f * uiScale, cardY - 2.0f * uiScale,
                 cardW + 4.0f * uiScale, cardH + 4.0f * uiScale, 0.0f, 0.74f, 0.83f, 0.35f);
-        AddQuad(verts, cardX, cardY, cardW, cardH, 0.03f, 0.05f, 0.08f, 0.92f);
+        AddQuad(verts, cardX, cardY, cardW, cardH,
+                hasCustomBgColor_ ? bgR_ : 0.03f,
+                hasCustomBgColor_ ? bgG_ : 0.05f,
+                hasCustomBgColor_ ? bgB_ : 0.08f,
+                hasCustomBgColor_ ? bgA_ : 0.92f);
         AddQuad(verts, cardX, cardY, cardW, 2.0f * uiScale, 0.0f, 0.74f, 0.83f, 0.95f);
 
         float padX = cardX + 14.0f * uiScale;
@@ -861,6 +883,8 @@ protected:
     int hudPreset_ = 1; // 0 = Compact, 1 = Standard (Loadout Multi-Graph), 2 = Detailed
     int configuredCorner_ = -1;
     float configuredWidth_ = 440.0f;
+    bool hasCustomBgColor_ = false;
+    float bgR_ = 0.03f, bgG_ = 0.05f, bgB_ = 0.08f, bgA_ = 0.92f;
     uint64_t lastConfigCheckNs_ = 0;
     time_t lastConfigMtime_ = 0;
 
