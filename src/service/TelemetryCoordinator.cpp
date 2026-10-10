@@ -369,19 +369,7 @@ bool TelemetryCoordinator::ConsumeHotkeyToggle() {
 }
 
 bool TelemetryCoordinator::ConsumeInGameHudHotkeyToggle() {
-    bool triggered = inputTracker_.ConsumeInGameHudHotkeyToggle();
-    if (!triggered) {
-        std::lock_guard<std::mutex> lock(dataMutex_);
-        EnsureConsumerConnectedLocked();
-        if (frameConsumer_.IsConnected()) {
-            bool ringHud = frameConsumer_.IsOverlayEnabled();
-            if (ringHud != inGameOverlayEnabled_) {
-                inGameOverlayEnabled_ = ringHud;
-                triggered = true;
-            }
-        }
-    }
-    return triggered;
+    return inputTracker_.ConsumeInGameHudHotkeyToggle();
 }
 
 bool TelemetryCoordinator::ConsumeOverlayHotkeyToggle() {
@@ -389,19 +377,7 @@ bool TelemetryCoordinator::ConsumeOverlayHotkeyToggle() {
 }
 
 bool TelemetryCoordinator::ConsumeRecordHotkeyToggle() {
-    bool triggered = inputTracker_.ConsumeRecordHotkeyToggle();
-    if (!triggered) {
-        std::lock_guard<std::mutex> lock(dataMutex_);
-        EnsureConsumerConnectedLocked();
-        if (frameConsumer_.IsConnected()) {
-            bool ringRec = frameConsumer_.IsRecordingActive();
-            if (ringRec != recordingActive_) {
-                recordingActive_ = ringRec;
-                triggered = true;
-            }
-        }
-    }
-    return triggered;
+    return inputTracker_.ConsumeRecordHotkeyToggle();
 }
 
 bool TelemetryCoordinator::ConsumeMiniHudHotkeyToggle() {

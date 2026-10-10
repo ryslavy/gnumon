@@ -377,7 +377,13 @@ void MainWindow::OnCyclePreset() {
 }
 
 void MainWindow::OnToggleRecording() {
-    isRecording_ = !isRecording_;
+    SetRecording(!isRecording_);
+}
+
+void MainWindow::SetRecording(bool active) {
+    if (isRecording_ == active) return;
+    isRecording_ = active;
+
     if (isRecording_) {
         // Auto-acquire active game PID if trackedPid_ is 0 or dead
         bool trackedHasRing = (trackedPid_ > 0 && common::IsRingAlive(trackedPid_));
@@ -462,6 +468,61 @@ void MainWindow::OnToggleRecording() {
         if (session_) {
             pmSetRecordingState(session_, false);
         }
+        if (frameQuery_ && session_ && csvFile_.is_open() && trackedPid_ > 0) {
+            // Drain remaining frames before closing
+            constexpr uint32_t BATCH_SIZE = 128;
+            std::vector<uint8_t> buffer(BATCH_SIZE * frameBlobSize_);
+            uint32_t numFrames = BATCH_SIZE;
+            while (pmConsumeFrames(frameQuery_, trackedPid_, buffer.data(), &numFrames) == PM_STATUS_SUCCESS && numFrames > 0) {
+                for (uint32_t i = 0; i < numFrames; ++i) {
+                    auto* frame = reinterpret_cast<FramePayload*>(buffer.data() + (i * frameBlobSize_));
+                    captureStats_.AddFrame(frame->frameTimeMs, frame->gpuUtil, frame->gpuTemp, frame->gpuPower,
+                                           frame->gpuFreq, frame->cpuUtil, frame->cpuTemp, frame->cpuPower);
+                    std::string appName = trackedProcessName_.isEmpty() ? "Unknown" : trackedProcessName_.toStdString();
+                    double fpsVal = (frame->frameTimeMs > 0.0001) ? (1000.0 / frame->frameTimeMs) : 0.0;
+                    csvFile_ << appName << ","
+                             << frame->processId << ","
+                             << "0x" << std::hex << frame->swapChain << std::dec << ","
+                             << FormatRuntime(frame->runtime) << ","
+                             << frame->syncInterval << ","
+                             << frame->presentFlags << ","
+                             << (frame->allowsTearing ? 1 : 0) << ","
+                             << "\"" << FormatPresentMode(frame->presentMode) << "\","
+                             << FormatFrameType(frame->frameType) << ","
+                             << frame->cpuStartQpc << ","
+                             << std::fixed << std::setprecision(4)
+                             << frame->frameTimeMs << ","
+                             << std::setprecision(2)
+                             << fpsVal << ","
+                             << frame->cpuBusyMs << ","
+                             << frame->cpuWaitMs << ","
+                             << frame->gpuLatencyMs << ","
+                             << frame->gpuTimeMs << ","
+                             << frame->gpuBusyMs << ","
+                             << frame->gpuWaitMs << ","
+                             << frame->videoBusyMs << ","
+                             << frame->displayLatencyMs << ","
+                             << frame->displayedTimeMs << ","
+                             << frame->animationError << ","
+                             << frame->animationTime << ","
+                             << frame->msFlipDelay << ","
+                             << frame->allInputToPhotonLatency << ","
+                             << frame->clickToPhotonLatencyMs << ","
+                             << frame->instrumentedLatencyMs << ","
+                             << std::setprecision(2)
+                             << frame->gpuPower << ","
+                             << frame->gpuTemp << ","
+                             << frame->gpuUtil << ","
+                             << frame->gpuFreq << ","
+                             << frame->cpuPower << ","
+                             << frame->cpuTemp << ","
+                             << frame->cpuUtil << "\n";
+                    recordedFramesCount_++;
+                }
+                if (numFrames < BATCH_SIZE) break;
+                numFrames = BATCH_SIZE;
+            }
+        }
         if (csvFile_.is_open()) {
             WriteCaptureSummary();
             csvFile_.flush();
@@ -482,13 +543,51 @@ void MainWindow::OnPollTimer() {
         AutoTargetProcess();
     }
 
-    // Process frame recording if active
+    // 1. Sync In-Game and Engine recording/overlay state
+    if (session_) {
+        bool ringRec = false;
+        bool hasRing = (pmGetRecordingState(session_, &ringRec) == PM_STATUS_SUCCESS &&
+                        trackedPid_ > 0 && common::IsRingAlive(trackedPid_));
+
+        if (hasRing) {
+            // When an active game ring exists, the game layer is the primary authority for in-game hotkeys.
+            // Adopt ring recording state idempotently.
+            if (ringRec != isRecording_) {
+                SetRecording(ringRec);
+            }
+            // Adopt ring overlay state idempotently.
+            bool ringOverlay = inGameOverlayActive_;
+            if (pmGetInGameOverlayState(session_, &ringOverlay) == PM_STATUS_SUCCESS) {
+                inGameOverlayActive_ = ringOverlay;
+            }
+            // Drain/discard any coordinator hotkey events to avoid ghost triggers while game is active
+            bool dummy = false;
+            pmCheckRecordHotkeyTriggered(session_, &dummy);
+            pmCheckInGameOverlayHotkeyTriggered(session_, &dummy);
+        } else {
+            // No active game ring: use global hotkey events from coordinator (desktop/windowed mode)
+            bool recTriggered = false;
+            if (pmCheckRecordHotkeyTriggered(session_, &recTriggered) == PM_STATUS_SUCCESS && recTriggered) {
+                SetRecording(!isRecording_);
+            }
+            bool hudTriggered = false;
+            if (pmCheckInGameOverlayHotkeyTriggered(session_, &hudTriggered) == PM_STATUS_SUCCESS && hudTriggered) {
+                inGameOverlayActive_ = !inGameOverlayActive_;
+            }
+        }
+    }
+    if (mainView_) {
+        mainView_->SetRecordingActive(isRecording_);
+        mainView_->SetOverlayActive(inGameOverlayActive_);
+    }
+
+    // 2. Process frame recording if active
     if (isRecording_ && csvFile_.is_open()) {
         // Check capture duration auto-stop
         if (config_.enableCaptureDuration && config_.captureDurationSeconds > 0) {
             uint64_t elapsedSec = (QDateTime::currentMSecsSinceEpoch() - recordingStartMs_) / 1000;
             if (elapsedSec >= static_cast<uint64_t>(config_.captureDurationSeconds)) {
-                OnToggleRecording();
+                SetRecording(false);
                 return;
             }
         }
@@ -551,39 +650,7 @@ void MainWindow::OnPollTimer() {
         }
     }
 
-    // 1. Sync In-Game and Engine recording/overlay state bi-directionally
-    if (session_) {
-        bool recTriggered = false;
-        if (pmCheckRecordHotkeyTriggered(session_, &recTriggered) == PM_STATUS_SUCCESS && recTriggered) {
-            OnToggleRecording();
-        } else {
-            bool ringRec = false;
-            if (pmGetRecordingState(session_, &ringRec) == PM_STATUS_SUCCESS) {
-                if (ringRec != isRecording_) {
-                    OnToggleRecording();
-                }
-            }
-        }
-
-        bool hudTriggered = false;
-        if (pmCheckInGameOverlayHotkeyTriggered(session_, &hudTriggered) == PM_STATUS_SUCCESS && hudTriggered) {
-            inGameOverlayActive_ = !inGameOverlayActive_;
-            pmSetInGameOverlayState(session_, inGameOverlayActive_);
-        } else {
-            bool ringOverlay = inGameOverlayActive_;
-            if (pmGetInGameOverlayState(session_, &ringOverlay) == PM_STATUS_SUCCESS) {
-                if (ringOverlay != inGameOverlayActive_) {
-                    inGameOverlayActive_ = ringOverlay;
-                }
-            }
-        }
-    }
-    if (mainView_) {
-        mainView_->SetRecordingActive(isRecording_);
-        mainView_->SetOverlayActive(inGameOverlayActive_);
-    }
-
-    // 2. Update Windowed Overlay if active
+    // 3. Update Windowed Overlay if active
     if (windowedOverlay_ && windowedOverlay_->isVisible() && session_) {
         PM_FULL_TELEMETRY_SNAPSHOT snap{};
         if (pmGetFullTelemetrySnapshot(session_, trackedPid_, &snap) == PM_STATUS_SUCCESS) {

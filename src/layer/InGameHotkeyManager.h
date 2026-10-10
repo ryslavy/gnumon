@@ -142,13 +142,34 @@ public:
         }
         lastCheckNs_ = nowNs;
 
-        // 1. Evdev polling
-        PollEvdev(ev, nowNs);
+        bool isOverlayDown = false;
+        bool isPresetDown = false;
+        bool isCaptureDown = false;
 
-        // 2. X11 fallback (if evdev didn't trigger)
-        if (!ev.toggleOverlay && !ev.cyclePreset && !ev.toggleCapture) {
-            PollX11(ev, nowNs);
+        // 1. Evdev polling
+        CheckEvdevState(nowNs, isOverlayDown, isPresetDown, isCaptureDown);
+
+        // 2. X11 fallback / check
+        CheckX11State(nowNs, isOverlayDown, isPresetDown, isCaptureDown);
+
+        // 3. Unified edge-triggered transitions with minimum debounce cooldown
+        if (isOverlayDown && !wasOverlayDown_ && (nowNs >= lastOverlayToggleNs_ + 300'000'000ULL)) {
+            ev.toggleOverlay = true;
+            lastOverlayToggleNs_ = nowNs;
         }
+        wasOverlayDown_ = isOverlayDown;
+
+        if (isPresetDown && !wasPresetDown_ && (nowNs >= lastPresetCycleNs_ + 250'000'000ULL)) {
+            ev.cyclePreset = true;
+            lastPresetCycleNs_ = nowNs;
+        }
+        wasPresetDown_ = isPresetDown;
+
+        if (isCaptureDown && !wasCaptureDown_ && (nowNs >= lastCaptureToggleNs_ + 500'000'000ULL)) {
+            ev.toggleCapture = true;
+            lastCaptureToggleNs_ = nowNs;
+        }
+        wasCaptureDown_ = isCaptureDown;
 
         return ev;
     }
@@ -203,7 +224,7 @@ private:
         }
     }
 
-    void PollEvdev(HotkeyEvents& out, uint64_t nowNs) {
+    void CheckEvdevState(uint64_t nowNs, bool& overlayDown, bool& presetDown, bool& captureDown) {
         ScanEvdev(nowNs);
         if (evdevFds_.empty()) return;
 
@@ -237,24 +258,9 @@ private:
             return true;
         };
 
-        bool anyOverlayDown = testChord(chordOverlay_, KEY_F9);
-        bool anyPresetDown = testChord(chordPreset_, KEY_F8, KEY_F11);
-        bool anyCaptureDown = testChord(chordCapture_, KEY_F10);
-
-        if (anyOverlayDown && !wasEvdevOverlay_) {
-            out.toggleOverlay = true;
-        }
-        wasEvdevOverlay_ = anyOverlayDown;
-
-        if (anyPresetDown && !wasEvdevPreset_) {
-            out.cyclePreset = true;
-        }
-        wasEvdevPreset_ = anyPresetDown;
-
-        if (anyCaptureDown && !wasEvdevCapture_) {
-            out.toggleCapture = true;
-        }
-        wasEvdevCapture_ = anyCaptureDown;
+        if (testChord(chordOverlay_, KEY_F9)) overlayDown = true;
+        if (testChord(chordPreset_, KEY_F8, KEY_F11)) presetDown = true;
+        if (testChord(chordCapture_, KEY_F10)) captureDown = true;
     }
 
     void EnsureX11() {
@@ -311,7 +317,7 @@ private:
         return true;
     }
 
-    void PollX11(HotkeyEvents& out, uint64_t nowNs) {
+    void CheckX11State(uint64_t nowNs, bool& overlayDown, bool& presetDown, bool& captureDown) {
         EnsureX11();
         if (!dpy_ && nowNs > lastX11RetryNs_ + 2'000'000'000ULL) {
             lastX11RetryNs_ = nowNs;
@@ -322,24 +328,16 @@ private:
         char keys[32]{};
         pXQueryKeymap_(dpy_, keys);
 
-        bool curOverlay = CheckX11Chord(dpy_, keys, chordOverlay_, 0xffc6 /* XK_F9 */);
-        if (curOverlay && !wasX11Overlay_) {
-            out.toggleOverlay = true;
+        if (!overlayDown) {
+            overlayDown = CheckX11Chord(dpy_, keys, chordOverlay_, 0xffc6 /* XK_F9 */);
         }
-        wasX11Overlay_ = curOverlay;
-
-        bool curPreset = CheckX11Chord(dpy_, keys, chordPreset_, 0xffc5 /* XK_F8 */);
-        if (!curPreset) curPreset = CheckX11Chord(dpy_, keys, chordPreset_, 0xffc8 /* XK_F11 */);
-        if (curPreset && !wasX11Preset_) {
-            out.cyclePreset = true;
+        if (!presetDown) {
+            presetDown = CheckX11Chord(dpy_, keys, chordPreset_, 0xffc5 /* XK_F8 */) ||
+                         CheckX11Chord(dpy_, keys, chordPreset_, 0xffc8 /* XK_F11 */);
         }
-        wasX11Preset_ = curPreset;
-
-        bool curCapture = CheckX11Chord(dpy_, keys, chordCapture_, 0xffc7 /* XK_F10 */);
-        if (curCapture && !wasX11Capture_) {
-            out.toggleCapture = true;
+        if (!captureDown) {
+            captureDown = CheckX11Chord(dpy_, keys, chordCapture_, 0xffc7 /* XK_F10 */);
         }
-        wasX11Capture_ = curCapture;
     }
 
     HotkeyChord chordOverlay_;
@@ -369,13 +367,12 @@ private:
     bool x11Tried_ = false;
     uint64_t lastX11RetryNs_ = 0;
 
-    bool wasX11Overlay_ = false;
-    bool wasX11Preset_ = false;
-    bool wasX11Capture_ = false;
-
-    bool wasEvdevOverlay_ = false;
-    bool wasEvdevPreset_ = false;
-    bool wasEvdevCapture_ = false;
+    bool wasOverlayDown_ = false;
+    bool wasPresetDown_ = false;
+    bool wasCaptureDown_ = false;
+    uint64_t lastOverlayToggleNs_ = 0;
+    uint64_t lastPresetCycleNs_ = 0;
+    uint64_t lastCaptureToggleNs_ = 0;
 };
 
 } // namespace gnumon::layer

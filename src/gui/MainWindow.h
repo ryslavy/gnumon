@@ -49,6 +49,7 @@ private:
     void UpdateStatusBar();
     QString GetCapturesDirectory() const;
     void WriteCaptureSummary();
+    void SetRecording(bool active);
 
     struct CaptureStats {
         std::vector<double> frameTimesMs;

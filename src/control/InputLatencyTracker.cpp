@@ -175,6 +175,10 @@ void InputLatencyTracker::WorkerLoop() {
     }
 
     bool wasInGame = false, wasRec = false, wasOverlay = false, wasMini = false;
+    uint64_t lastInGameNs = 0;
+    uint64_t lastRecNs = 0;
+    uint64_t lastOverlayNs = 0;
+    uint64_t lastMiniNs = 0;
     std::vector<pollfd> pFds;
     for (int fd : inputFds_) {
         pFds.push_back({ fd, POLLIN, 0 });
@@ -193,25 +197,41 @@ void InputLatencyTracker::WorkerLoop() {
 
             bool downInGame = isDown(kcInGame);
             if (downInGame && !wasInGame) {
-                inGameHudToggleTriggered_.store(true, std::memory_order_release);
+                uint64_t nowNs = common::Clock::GetTimestampNs();
+                if (nowNs >= lastInGameNs + 300'000'000ULL) {
+                    inGameHudToggleTriggered_.store(true, std::memory_order_release);
+                    lastInGameNs = nowNs;
+                }
             }
             wasInGame = downInGame;
 
             bool downRec = isDown(kcRec);
             if (downRec && !wasRec) {
-                recordToggleTriggered_.store(true, std::memory_order_release);
+                uint64_t nowNs = common::Clock::GetTimestampNs();
+                if (nowNs >= lastRecNs + 500'000'000ULL) {
+                    recordToggleTriggered_.store(true, std::memory_order_release);
+                    lastRecNs = nowNs;
+                }
             }
             wasRec = downRec;
 
             bool downOverlay = isDown(kcOverlay);
             if (downOverlay && !wasOverlay) {
-                overlayToggleTriggered_.store(true, std::memory_order_release);
+                uint64_t nowNs = common::Clock::GetTimestampNs();
+                if (nowNs >= lastOverlayNs + 300'000'000ULL) {
+                    overlayToggleTriggered_.store(true, std::memory_order_release);
+                    lastOverlayNs = nowNs;
+                }
             }
             wasOverlay = downOverlay;
 
             bool downMini = isDown(kcMini);
             if (downMini && !wasMini) {
-                miniHudToggleTriggered_.store(true, std::memory_order_release);
+                uint64_t nowNs = common::Clock::GetTimestampNs();
+                if (nowNs >= lastMiniNs + 300'000'000ULL) {
+                    miniHudToggleTriggered_.store(true, std::memory_order_release);
+                    lastMiniNs = nowNs;
+                }
             }
             wasMini = downMini;
         }
@@ -228,21 +248,33 @@ void InputLatencyTracker::WorkerLoop() {
                             size_t count = n / sizeof(struct input_event);
                             for (size_t i = 0; i < count; ++i) {
                                 if (ev[i].type == EV_KEY && ev[i].value == 1) {
+                                    uint64_t nowNs = common::Clock::GetTimestampNs();
                                     if (ev[i].code == BTN_LEFT || ev[i].code == BTN_RIGHT || ev[i].code == BTN_MIDDLE) {
-                                        uint64_t ts = common::Clock::GetTimestampNs();
-                                        lastClickTimestampNs_.store(ts, std::memory_order_release);
+                                        lastClickTimestampNs_.store(nowNs, std::memory_order_release);
                                     }
                                     if (ev[i].code == evdevInGameHud_) {
-                                        inGameHudToggleTriggered_.store(true, std::memory_order_release);
+                                        if (nowNs >= lastInGameNs + 300'000'000ULL) {
+                                            inGameHudToggleTriggered_.store(true, std::memory_order_release);
+                                            lastInGameNs = nowNs;
+                                        }
                                     }
                                     if (ev[i].code == evdevRecord_) {
-                                        recordToggleTriggered_.store(true, std::memory_order_release);
+                                        if (nowNs >= lastRecNs + 500'000'000ULL) {
+                                            recordToggleTriggered_.store(true, std::memory_order_release);
+                                            lastRecNs = nowNs;
+                                        }
                                     }
                                     if (ev[i].code == evdevOverlay_) {
-                                        overlayToggleTriggered_.store(true, std::memory_order_release);
+                                        if (nowNs >= lastOverlayNs + 300'000'000ULL) {
+                                            overlayToggleTriggered_.store(true, std::memory_order_release);
+                                            lastOverlayNs = nowNs;
+                                        }
                                     }
                                     if (ev[i].code == evdevMiniHud_) {
-                                        miniHudToggleTriggered_.store(true, std::memory_order_release);
+                                        if (nowNs >= lastMiniNs + 300'000'000ULL) {
+                                            miniHudToggleTriggered_.store(true, std::memory_order_release);
+                                            lastMiniNs = nowNs;
+                                        }
                                     }
                                 }
                             }
