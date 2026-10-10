@@ -144,6 +144,30 @@ static bool GetConfiguredHudDefault() {
     return false;
 }
 
+static int GetConfiguredHudPreset() {
+    const char* home = getenv("HOME");
+    if (home) {
+        std::string cfgPath = std::string(home) + "/.config/gnumon/config.ini";
+        std::ifstream file(cfgPath);
+        if (file.is_open()) {
+            std::string line;
+            while (std::getline(file, line)) {
+                if (line.rfind("inGameHudPreset", 0) == 0 || line.rfind("selectedPreset", 0) == 0) {
+                    auto pos = line.find('=');
+                    if (pos != std::string::npos) {
+                        try {
+                            int p = std::stoi(line.substr(pos + 1));
+                            if (p >= 0 && p <= 2) return p;
+                            if (p == 3) return 2;
+                        } catch (...) {}
+                    }
+                }
+            }
+        }
+    }
+    return 1; // Standard (Oscilloscope) default
+}
+
 static bool g_enableOverlay = GetConfiguredHudDefault();
 static int g_hudCorner = GetConfiguredHudCorner();
 thread_local uint64_t g_currentCpuStartNs = 0;
@@ -970,6 +994,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
                 g_overlayRenderer.Initialize(dev, disp.physicalDevice, gfxQueue, gfxQFam,
                                              disp.getProcAddr,
                                              g_getPhysicalDeviceMemoryProperties);
+                g_overlayRenderer.SetPreset(GetConfiguredHudPreset());
             }
 
             if (g_overlayRenderer.IsInitialized()) {

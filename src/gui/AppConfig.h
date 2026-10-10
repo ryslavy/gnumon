@@ -469,6 +469,7 @@ struct AppConfig {
         s.beginGroup("Overlay");
         s.setValue("hideDuringCapture", overlayHideDuringCapture);
         s.setValue("inGameHudCorner", overlayCorner);
+        s.setValue("inGameHudPreset", selectedPreset);
         s.setValue("width", overlayWidth);
         s.setValue("timeScale", overlayTimeScale);
         s.setValue("graphicsScaling", overlayGraphicsScaling);
