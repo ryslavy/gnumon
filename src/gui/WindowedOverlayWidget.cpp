@@ -26,10 +26,10 @@ void WindowedOverlayWidget::ReloadLayout() {
         if (widget.widgetType == WidgetType::Graph) {
             totalH += (widget.metrics.size() * 18) + 76 + 24;
         } else {
-            totalH += 24;
+            totalH += std::max(1, static_cast<int>(widget.metrics.size())) * 24;
         }
     }
-    totalH += 12;
+    totalH += 16;
 
     resize(w, totalH);
     if (pos().x() <= 0 && pos().y() <= 0) {
@@ -513,50 +513,51 @@ void WindowedOverlayWidget::paintEvent(QPaintEvent *) {
     for (const auto& widget : config_->loadout.widgets) {
         if (widget.widgetType == WidgetType::Readout) {
             if (widget.metrics.isEmpty()) continue;
-            const auto& line = widget.metrics[0];
-            bool isStr = IsStringMetric(line.metricId);
+            for (const auto& line : widget.metrics) {
+                bool isStr = IsStringMetric(line.metricId);
 
-            // Color swatch
-            p.setPen(Qt::NoPen);
-            p.setBrush(line.lineColor);
-            p.drawRect(14, curY + 3, 8, 8);
+                // Color swatch
+                p.setPen(Qt::NoPen);
+                p.setBrush(line.lineColor);
+                p.drawRect(14, curY + 3, 8, 8);
 
-            // Label
-            QString lbl;
-            if (isStr) {
-                lbl = GetMetricLabel(line.metricId);
-            } else {
-                QString statName = "";
-                if (line.statId == 1) statName = "(avg)";
-                else if (line.statId == 2) statName = "(min)";
-                else if (line.statId == 3) statName = "(max)";
-                else if (line.statId == 4) statName = "(raw)";
-                else if (line.statId == 5) statName = "(1%)";
-                else if (line.statId == 6) statName = "(99%)";
+                // Label
+                QString lbl;
+                if (isStr) {
+                    lbl = GetMetricLabel(line.metricId);
+                } else {
+                    QString statName = "";
+                    if (line.statId == 1) statName = "(avg)";
+                    else if (line.statId == 2) statName = "(min)";
+                    else if (line.statId == 3) statName = "(max)";
+                    else if (line.statId == 4) statName = "(raw)";
+                    else if (line.statId == 5) statName = "(1%)";
+                    else if (line.statId == 6) statName = "(99%)";
 
-                lbl = statName.isEmpty() ? GetMetricLabel(line.metricId)
-                                         : QString("%1 %2").arg(GetMetricLabel(line.metricId), statName);
+                    lbl = statName.isEmpty() ? GetMetricLabel(line.metricId)
+                                             : QString("%1 %2").arg(GetMetricLabel(line.metricId), statName);
+                }
+                p.setPen(QColor(220, 225, 235));
+                p.setFont(QFont("sans-serif", 9, QFont::Normal));
+                p.drawText(28, curY + 12, lbl);
+
+                // Value + Unit
+                QString valStr;
+                if (isStr) {
+                    valStr = GetStringMetricValue(line.metricId);
+                } else {
+                    const auto& hist = GetHistoryForMetric(line.metricId);
+                    float val = CalculateStat(hist, line.statId);
+                    QString units = GetMetricUnits(line.metricId);
+                    valStr = units.isEmpty() ? QString::number(val, 'f', 1)
+                                             : QString("%1 %2").arg(QString::number(val, 'f', 1), units);
+                }
+                p.setPen(QColor(line.lineColor));
+                p.setFont(QFont("sans-serif", 9, QFont::Bold));
+                p.drawText(w - 14 - p.fontMetrics().horizontalAdvance(valStr), curY + 12, valStr);
+
+                curY += 24;
             }
-            p.setPen(QColor(220, 225, 235));
-            p.setFont(QFont("sans-serif", 9, QFont::Normal));
-            p.drawText(28, curY + 12, lbl);
-
-            // Value + Unit
-            QString valStr;
-            if (isStr) {
-                valStr = GetStringMetricValue(line.metricId);
-            } else {
-                const auto& hist = GetHistoryForMetric(line.metricId);
-                float val = CalculateStat(hist, line.statId);
-                QString units = GetMetricUnits(line.metricId);
-                valStr = units.isEmpty() ? QString::number(val, 'f', 1)
-                                         : QString("%1 %2").arg(QString::number(val, 'f', 1), units);
-            }
-            p.setPen(QColor(line.lineColor));
-            p.setFont(QFont("sans-serif", 9, QFont::Bold));
-            p.drawText(w - 14 - p.fontMetrics().horizontalAdvance(valStr), curY + 12, valStr);
-
-            curY += 24;
         } else {
             // Graph Widget (Oscilloscope)
             for (int s = 0; s < widget.metrics.size(); ++s) {
@@ -648,41 +649,65 @@ void WindowedOverlayWidget::paintEvent(QPaintEvent *) {
                 const auto& hist = GetHistoryForMetric(line.metricId);
                 if (hist.size() < 2) continue;
 
-                float stepX = static_cast<float>(gw) / static_cast<float>(hist.size() - 1);
+                size_t nSamples = hist.size();
+                float stepX = static_cast<float>(gw) / 127.0f;
+                float startX = (gx + gw) - (static_cast<float>(nSamples - 1) * stepX);
+
                 auto getPlotY = [&](float v) -> float {
                     float norm = (v - minVal) / range;
                     norm = std::clamp(norm, 0.0f, 1.0f);
                     return (gy + gh) - (norm * gh);
                 };
 
+                bool hasRawLineForMetric = false;
+                for (const auto& other : widget.metrics) {
+                    if (other.metricId == line.metricId && (other.statId == 4 || other.statId == 0)) {
+                        hasRawLineForMetric = true;
+                        break;
+                    }
+                }
+
                 // Translucent Area Fill
                 if (line.fillColor.alpha() > 0) {
                     QPainterPath areaPath;
-                    areaPath.moveTo(gx, gy + gh);
-                    for (size_t i = 0; i < hist.size(); ++i) {
-                        float px = gx + i * stepX;
+                    areaPath.moveTo(startX, gy + gh);
+                    for (size_t i = 0; i < nSamples; ++i) {
+                        float px = startX + i * stepX;
                         float py = getPlotY(hist[i]);
                         areaPath.lineTo(px, py);
                     }
-                    areaPath.lineTo(gx + (hist.size() - 1) * stepX, gy + gh);
+                    areaPath.lineTo(startX + (nSamples - 1) * stepX, gy + gh);
                     areaPath.closeSubpath();
                     p.fillPath(areaPath, line.fillColor);
                 }
 
-                // Line curve
-                p.setPen(QPen(line.lineColor, 1.8));
-                bool isStepped = (line.statId == 6 || line.statId == 5); // 99% or 1%
-                for (size_t i = 0; i < hist.size() - 1; ++i) {
-                    float px0 = gx + i * stepX;
-                    float py0 = getPlotY(hist[i]);
-                    float px1 = gx + (i + 1) * stepX;
-                    float py1 = getPlotY(hist[i + 1]);
-
-                    if (isStepped) {
-                        p.drawLine(QPointF(px0, py0), QPointF(px1, py0));
-                        p.drawLine(QPointF(px1, py0), QPointF(px1, py1));
-                    } else {
+                // Line curve or stat reference line
+                if (line.statId == 4 || line.statId == 0) {
+                    p.setPen(QPen(line.lineColor, 1.8));
+                    for (size_t i = 0; i < nSamples - 1; ++i) {
+                        float px0 = startX + i * stepX;
+                        float py0 = getPlotY(hist[i]);
+                        float px1 = startX + (i + 1) * stepX;
+                        float py1 = getPlotY(hist[i + 1]);
                         p.drawLine(QPointF(px0, py0), QPointF(px1, py1));
+                    }
+                } else {
+                    // Statistical reference guideline
+                    float statVal = CalculateStat(hist, line.statId);
+                    float py = getPlotY(statVal);
+                    p.setPen(QPen(line.lineColor, 1.8, Qt::SolidLine));
+                    p.drawLine(QPointF(gx, py), QPointF(gx + gw, py));
+
+                    // If no separate raw line exists for this metric, also plot its waveform
+                    if (!hasRawLineForMetric) {
+                        p.setPen(QPen(line.lineColor, 1.4));
+                        for (size_t i = 0; i < nSamples - 1; ++i) {
+                            float px0 = startX + i * stepX;
+                            float py0 = getPlotY(hist[i]);
+                            float px1 = startX + (i + 1) * stepX;
+                            float py1 = getPlotY(hist[i + 1]);
+                            p.drawLine(QPointF(px0, py0), QPointF(px1, py1));
+                        }
                     }
                 }
             }

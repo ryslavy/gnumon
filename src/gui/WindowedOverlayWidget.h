@@ -38,7 +38,7 @@ protected:
 private:
     float CalculateStat(const std::deque<float>& q, int statId);
     const std::deque<float>& GetHistoryForMetric(int metricId);
-    void PushSample(std::deque<float>& q, float val, size_t maxLen = 120);
+    void PushSample(std::deque<float>& q, float val, size_t maxLen = 128);
     QString GetStringMetricValue(int metricId) const;
     bool IsStringMetric(int metricId) const;
 

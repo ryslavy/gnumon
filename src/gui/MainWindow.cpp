@@ -471,21 +471,21 @@ void MainWindow::OnToggleRecording() {
 }
 
 void MainWindow::OnPollTimer() {
-    // Process frame recording if active
-    if (isRecording_ && csvFile_.is_open()) {
-        // If tracked PID is invalid or ring disconnected, dynamically re-acquire active ring
-        bool trackedHasRing = (trackedPid_ > 0 && std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(trackedPid_)));
-        if (!trackedHasRing) {
-            auto activePids = common::GetActiveRingPids();
-            if (!activePids.empty()) {
-                trackedPid_ = activePids.front();
-                trackedProcessName_ = QString::fromStdString(common::ProcUtils::GetProcessName(trackedPid_));
-                if (session_) {
-                    pmStartTrackingProcess(session_, trackedPid_);
-                }
+    // If tracked PID is invalid or ring disconnected, dynamically auto-acquire active ring
+    bool trackedHasRing = (trackedPid_ > 0 && std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(trackedPid_)));
+    if (!trackedHasRing && (config_.autoTarget || trackedPid_ == 0)) {
+        auto activePids = common::GetActiveRingPids();
+        if (!activePids.empty()) {
+            trackedPid_ = activePids.front();
+            trackedProcessName_ = QString::fromStdString(common::ProcUtils::GetProcessName(trackedPid_));
+            if (session_) {
+                pmStartTrackingProcess(session_, trackedPid_);
             }
         }
+    }
 
+    // Process frame recording if active
+    if (isRecording_ && csvFile_.is_open()) {
         // Check capture duration auto-stop
         if (config_.enableCaptureDuration && config_.captureDurationSeconds > 0) {
             uint64_t elapsedSec = (QDateTime::currentMSecsSinceEpoch() - recordingStartMs_) / 1000;

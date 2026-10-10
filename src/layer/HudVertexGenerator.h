@@ -436,28 +436,33 @@ public:
             val.erase(0, val.find_first_not_of(" \t\r\n"));
             val.erase(val.find_last_not_of(" \t\r\n") + 1);
 
-            if (currentGroup == "Hotkeys") {
-                if (key == "overlay") hotkeyOverlay_ = val;
-                else if (key == "presetCycle") hotkeyPresetCycle_ = val;
-                else if (key == "capture") hotkeyCapture_ = val;
-            } else if (currentGroup == "Overlay") {
-                if (key == "inGameHudCorner") {
+            std::string groupLower = currentGroup;
+            for (char& c : groupLower) c = std::tolower(c);
+            std::string keyLower = key;
+            for (char& c : keyLower) c = std::tolower(c);
+
+            if (groupLower == "hotkeys") {
+                if (keyLower == "overlay") hotkeyOverlay_ = val;
+                else if (keyLower == "presetcycle") hotkeyPresetCycle_ = val;
+                else if (keyLower == "capture") hotkeyCapture_ = val;
+            } else if (groupLower == "overlay") {
+                if (keyLower == "ingamehudcorner") {
                     try { configuredCorner_ = std::stoi(val); } catch (...) {}
-                } else if (key == "width") {
+                } else if (keyLower == "width") {
                     try { configuredWidth_ = std::stof(val); } catch (...) {}
-                } else if (key == "inGameHudPreset") {
+                } else if (keyLower == "ingamehudpreset") {
                     try { hudPreset_ = std::clamp(std::stoi(val), 0, 2); } catch (...) {}
-                } else if (key == "bgColor") {
+                } else if (keyLower == "bgcolor") {
                     ParseColorHex(val, bgR_, bgG_, bgB_, bgA_);
                     hasCustomBgColor_ = true;
                 }
-            } else if (currentGroup == "Loadout") {
-                if (key == "widgetCount") {
+            } else if (groupLower == "loadout") {
+                if (keyLower == "widgetcount") {
                     try {
                         widgetCount = std::stoi(val);
                         if (widgetCount > (int)loadedWidgets.size()) loadedWidgets.resize(widgetCount);
                     } catch (...) {}
-                } else if (key.rfind("w", 0) == 0) {
+                } else if (keyLower.rfind("w", 0) == 0) {
                     int wIdx = -1, lIdx = -1;
                     char propBuf[64]{};
                     bool isLineProp = false;
@@ -476,37 +481,40 @@ public:
                         isWidgetProp = true;
                     }
 
+                    std::string propLower(propBuf);
+                    for (char& c : propLower) c = std::tolower(c);
+                    std::string valLower = val;
+                    for (char& c : valLower) c = std::tolower(c);
+
                     if (isWidgetProp && wIdx >= 0) {
-                        std::string prop(propBuf);
                         if (wIdx >= (int)loadedWidgets.size()) loadedWidgets.resize(wIdx + 1);
-                        if (prop == "type") loadedWidgets[wIdx].isGraph = (val == "graph");
-                        else if (prop == "graphType") loadedWidgets[wIdx].isHistogram = (val == "histogram");
-                        else if (prop == "rangeMin") {
+                        if (propLower == "type") loadedWidgets[wIdx].isGraph = (valLower == "graph");
+                        else if (propLower == "graphtype") loadedWidgets[wIdx].isHistogram = (valLower == "histogram");
+                        else if (propLower == "rangemin") {
                             try { loadedWidgets[wIdx].rangeMin = std::stof(val); } catch (...) {}
-                        } else if (prop == "rangeMax") {
+                        } else if (propLower == "rangemax") {
                             try { loadedWidgets[wIdx].rangeMax = std::stof(val); } catch (...) {}
-                        } else if (prop == "autoScale") loadedWidgets[wIdx].autoScale = (val == "true" || val == "1");
-                        else if (prop == "lineCount") {
+                        } else if (propLower == "autoscale") loadedWidgets[wIdx].autoScale = (valLower == "true" || valLower == "1");
+                        else if (propLower == "linecount") {
                             try {
                                 int lc = std::stoi(val);
                                 if (lc > (int)loadedWidgets[wIdx].lines.size()) loadedWidgets[wIdx].lines.resize(lc);
                             } catch (...) {}
                         }
                     } else if (isLineProp && wIdx >= 0 && lIdx >= 0) {
-                        std::string prop(propBuf);
                         if (wIdx >= (int)loadedWidgets.size()) loadedWidgets.resize(wIdx + 1);
                         if (lIdx >= (int)loadedWidgets[wIdx].lines.size()) loadedWidgets[wIdx].lines.resize(lIdx + 1);
                         auto& line = loadedWidgets[wIdx].lines[lIdx];
-                        if (prop == "metricId") {
+                        if (propLower == "metricid") {
                             try {
                                 line.metricId = std::stoi(val);
                                 PopulateMetricMetadata(line);
                             } catch (...) {}
-                        } else if (prop == "statId") {
+                        } else if (propLower == "statid") {
                             try { line.statId = std::stoi(val); } catch (...) {}
-                        } else if (prop == "lineColor") {
+                        } else if (propLower == "linecolor") {
                             ParseColorHex(val, line.r, line.g, line.b, line.a);
-                        } else if (prop == "fillColor") {
+                        } else if (propLower == "fillcolor") {
                             ParseColorHex(val, line.fillR, line.fillG, line.fillB, line.fillA);
                         }
                     }
@@ -813,10 +821,28 @@ public:
             if (w.isGraph) {
                 totalH += (w.lines.size() * 18.0f * uiScale) + 76.0f * uiScale + 22.0f * uiScale;
             } else {
-                totalH += 22.0f * uiScale;
+                totalH += (w.lines.size() * 20.0f * uiScale) + 4.0f * uiScale;
             }
         }
         totalH += 10.0f * uiScale;
+
+        // Auto-scale uiScale down if total height exceeds viewport height
+        float maxAvailableH = static_cast<float>(sh) - margin * 2.0f;
+        if (totalH > maxAvailableH && totalH > 0.0f) {
+            float fitScale = maxAvailableH / totalH;
+            uiScale *= fitScale;
+            cardW = (configuredWidth_ > 200.0f ? configuredWidth_ : 440.0f) * uiScale;
+            totalH = 34.0f * uiScale;
+            for (const auto& w : activeWidgets_) {
+                if (w.isGraph) {
+                    totalH += (w.lines.size() * 18.0f * uiScale) + 76.0f * uiScale + 22.0f * uiScale;
+                } else {
+                    totalH += (w.lines.size() * 20.0f * uiScale) + 4.0f * uiScale;
+                }
+            }
+            totalH += 10.0f * uiScale;
+        }
+
         float cardH = std::clamp(totalH, 100.0f, static_cast<float>(sh) - margin * 2.0f);
 
         float cardX = margin;
@@ -851,72 +877,73 @@ public:
         // --- WIDGETS ---
         for (const auto& w : activeWidgets_) {
             if (!w.isGraph) {
-                // Readout Widget
+                // Readout Widget (render ALL configured metric lines)
                 if (w.lines.empty()) continue;
-                const auto& line = w.lines[0];
+                for (const auto& line : w.lines) {
+                    // Swatch quad
+                    AddQuad(verts, padX, curY + 2.0f * uiScale, 8.0f * uiScale, 8.0f * uiScale, line.r, line.g, line.b, line.a);
 
-                // Swatch quad
-                AddQuad(verts, padX, curY + 2.0f * uiScale, 8.0f * uiScale, 8.0f * uiScale, line.r, line.g, line.b, line.a);
+                    // Label
+                    const char* statName = "";
+                    bool isStringMetric = (line.metricId == PM_METRIC_GPU_NAME ||
+                                           line.metricId == PM_METRIC_CPU_NAME ||
+                                           line.metricId == PM_METRIC_GPU_VENDOR ||
+                                           line.metricId == PM_METRIC_CPU_VENDOR ||
+                                           line.metricId == PM_METRIC_PRESENT_RUNTIME ||
+                                           line.metricId == PM_METRIC_PRESENT_MODE ||
+                                           line.metricId == PM_METRIC_FRAME_TYPE ||
+                                           line.metricId == PM_METRIC_APPLICATION);
 
-                // Label
-                const char* statName = "";
-                bool isStringMetric = (line.metricId == PM_METRIC_GPU_NAME ||
-                                       line.metricId == PM_METRIC_CPU_NAME ||
-                                       line.metricId == PM_METRIC_GPU_VENDOR ||
-                                       line.metricId == PM_METRIC_CPU_VENDOR ||
-                                       line.metricId == PM_METRIC_PRESENT_RUNTIME ||
-                                       line.metricId == PM_METRIC_PRESENT_MODE ||
-                                       line.metricId == PM_METRIC_FRAME_TYPE ||
-                                       line.metricId == PM_METRIC_APPLICATION);
-
-                if (!isStringMetric) {
-                    if (line.statId == 1) statName = "(avg)";
-                    else if (line.statId == 2) statName = "(min)";
-                    else if (line.statId == 3) statName = "(max)";
-                    else if (line.statId == 4) statName = "(raw)";
-                    else if (line.statId == 5) statName = "(1%)";
-                    else if (line.statId == 6) statName = "(99%)";
-                }
-
-                if (statName[0] != '\0') {
-                    snprintf(buf, sizeof(buf), "%s %s", line.label.c_str(), statName);
-                } else {
-                    snprintf(buf, sizeof(buf), "%s", line.label.c_str());
-                }
-                AddString(verts, buf, padX + 14.0f * uiScale, curY, 0.75f * uiScale, 0.85f, 0.90f, 0.95f, 0.95f);
-
-                // Value + Units
-                if (line.metricId == PM_METRIC_GPU_NAME) {
-                    snprintf(buf, sizeof(buf), "%s", gpuName_.c_str());
-                } else if (line.metricId == PM_METRIC_CPU_NAME) {
-                    snprintf(buf, sizeof(buf), "%s", cpuName_.c_str());
-                } else if (line.metricId == PM_METRIC_GPU_VENDOR) {
-                    snprintf(buf, sizeof(buf), "%s", GetGpuVendorString(gpuName_).c_str());
-                } else if (line.metricId == PM_METRIC_CPU_VENDOR) {
-                    snprintf(buf, sizeof(buf), "%s", GetCpuVendorString(cpuName_).c_str());
-                } else if (line.metricId == PM_METRIC_PRESENT_RUNTIME) {
-                    snprintf(buf, sizeof(buf), "%s", isVulkan_ ? "Vulkan" : "OpenGL");
-                } else if (line.metricId == PM_METRIC_PRESENT_MODE) {
-                    snprintf(buf, sizeof(buf), "%s", "Composed Flip");
-                } else if (line.metricId == PM_METRIC_FRAME_TYPE) {
-                    snprintf(buf, sizeof(buf), "%s", "Application");
-                } else if (line.metricId == PM_METRIC_APPLICATION) {
-                    snprintf(buf, sizeof(buf), "%s", appName_.c_str());
-                } else {
-                    const auto& hist = GetHistoryForMetric(line.metricId);
-                    float val = CalculateStat(hist, line.statId);
-                    if (!line.units.empty()) {
-                        snprintf(buf, sizeof(buf), "%.1f %s", val, line.units.c_str());
-                    } else {
-                        snprintf(buf, sizeof(buf), "%.2f", val);
+                    if (!isStringMetric) {
+                        if (line.statId == 1) statName = "(avg)";
+                        else if (line.statId == 2) statName = "(min)";
+                        else if (line.statId == 3) statName = "(max)";
+                        else if (line.statId == 4) statName = "(raw)";
+                        else if (line.statId == 5) statName = "(1%)";
+                        else if (line.statId == 6) statName = "(99%)";
                     }
+
+                    if (statName[0] != '\0') {
+                        snprintf(buf, sizeof(buf), "%s %s", line.label.c_str(), statName);
+                    } else {
+                        snprintf(buf, sizeof(buf), "%s", line.label.c_str());
+                    }
+                    AddString(verts, buf, padX + 14.0f * uiScale, curY, 0.75f * uiScale, 0.85f, 0.90f, 0.95f, 0.95f);
+
+                    // Value + Units
+                    if (line.metricId == PM_METRIC_GPU_NAME) {
+                        snprintf(buf, sizeof(buf), "%s", gpuName_.c_str());
+                    } else if (line.metricId == PM_METRIC_CPU_NAME) {
+                        snprintf(buf, sizeof(buf), "%s", cpuName_.c_str());
+                    } else if (line.metricId == PM_METRIC_GPU_VENDOR) {
+                        snprintf(buf, sizeof(buf), "%s", GetGpuVendorString(gpuName_).c_str());
+                    } else if (line.metricId == PM_METRIC_CPU_VENDOR) {
+                        snprintf(buf, sizeof(buf), "%s", GetCpuVendorString(cpuName_).c_str());
+                    } else if (line.metricId == PM_METRIC_PRESENT_RUNTIME) {
+                        snprintf(buf, sizeof(buf), "%s", isVulkan_ ? "Vulkan" : "OpenGL");
+                    } else if (line.metricId == PM_METRIC_PRESENT_MODE) {
+                        snprintf(buf, sizeof(buf), "%s", "Composed Flip");
+                    } else if (line.metricId == PM_METRIC_FRAME_TYPE) {
+                        snprintf(buf, sizeof(buf), "%s", "Application");
+                    } else if (line.metricId == PM_METRIC_APPLICATION) {
+                        snprintf(buf, sizeof(buf), "%s", appName_.c_str());
+                    } else {
+                        const auto& hist = GetHistoryForMetric(line.metricId);
+                        float val = CalculateStat(hist, line.statId);
+                        if (!line.units.empty()) {
+                            snprintf(buf, sizeof(buf), "%.1f %s", val, line.units.c_str());
+                        } else {
+                            snprintf(buf, sizeof(buf), "%.2f", val);
+                        }
+                    }
+
+                    float valW = GetStringWidth(buf, 0.78f * uiScale);
+                    float valX = std::max(cardX + 10.0f * uiScale, (cardX + cardW - 14.0f * uiScale) - valW);
+                    AddString(verts, buf, valX, curY, 0.78f * uiScale, line.r, line.g, line.b, 1.0f);
+
+                    curY += 20.0f * uiScale;
                 }
-
-                float valW = GetStringWidth(buf, 0.78f * uiScale);
-                float valX = std::max(cardX + 10.0f * uiScale, (cardX + cardW - 14.0f * uiScale) - valW);
-                AddString(verts, buf, valX, curY, 0.78f * uiScale, line.r, line.g, line.b, 1.0f);
-
-                curY += 20.0f * uiScale;
+                curY += 2.0f * uiScale;
             } else {
                 // Graph Widget (faithful to PresentMon Windows screenshot!)
                 // 1. Swatches & Header readouts for each line
@@ -1078,8 +1105,17 @@ public:
                     float stepX = gw / 127.0f;
                     float startX = (gx + gw) - (static_cast<float>(nSamples - 1) * stepX);
 
-                    // Area fill under curve for primary series (lIdx == 0)
-                    if (lIdx == 0 && line.fillA > 0.01f) {
+                    // Check if this metric has a separate raw line in this widget
+                    bool hasRawLineForMetric = false;
+                    for (const auto& other : w.lines) {
+                        if (other.metricId == line.metricId && (other.statId == 4 || other.statId == 0)) {
+                            hasRawLineForMetric = true;
+                            break;
+                        }
+                    }
+
+                    // Area fill under waveform for series if fill alpha > 0
+                    if (line.fillA > 0.01f) {
                         float bottomY = gy + gh;
                         for (size_t i = 0; i < nSamples - 1; ++i) {
                             float px0 = startX + static_cast<float>(i) * stepX;
@@ -1096,23 +1132,31 @@ public:
                         }
                     }
 
-                    // Series Line Curve
-                    bool isStepped = (line.statId == 6 || line.statId == 5); // 99% or 1% percentiles step
-                    for (size_t i = 0; i < nSamples - 1; ++i) {
-                        float px0 = startX + static_cast<float>(i) * stepX;
-                        float py0 = getPlotY(hist[i]);
-                        float px1 = startX + static_cast<float>(i + 1) * stepX;
-                        float py1 = getPlotY(hist[i + 1]);
-
-                        if (isStepped) {
-                            // Stepped line: horizontal segment then vertical step
-                            AddLine(verts, px0, py0, px1, py0, 1.8f * uiScale, line.r, line.g, line.b, line.a);
-                            if (std::abs(py1 - py0) > 0.5f) {
-                                AddLine(verts, px1, py0, px1, py1, 1.8f * uiScale, line.r, line.g, line.b, line.a);
-                            }
-                        } else {
-                            // Direct line segment
+                    // Series Line Curve or Guideline
+                    if (line.statId == 4 || line.statId == 0) {
+                        // Raw sample waveform trace
+                        for (size_t i = 0; i < nSamples - 1; ++i) {
+                            float px0 = startX + static_cast<float>(i) * stepX;
+                            float py0 = getPlotY(hist[i]);
+                            float px1 = startX + static_cast<float>(i + 1) * stepX;
+                            float py1 = getPlotY(hist[i + 1]);
                             AddLine(verts, px0, py0, px1, py1, 1.8f * uiScale, line.r, line.g, line.b, line.a);
+                        }
+                    } else {
+                        // Statistical reference guideline across the graph (avg, 99%, 1%, min, max)
+                        float statVal = CalculateStat(hist, line.statId);
+                        float py = getPlotY(statVal);
+                        AddLine(verts, gx, py, gx + gw, py, 1.8f * uiScale, line.r, line.g, line.b, line.a);
+
+                        // If no separate raw line exists for this metric in this widget, also plot its waveform
+                        if (!hasRawLineForMetric) {
+                            for (size_t i = 0; i < nSamples - 1; ++i) {
+                                float px0 = startX + static_cast<float>(i) * stepX;
+                                float py0 = getPlotY(hist[i]);
+                                float px1 = startX + static_cast<float>(i + 1) * stepX;
+                                float py1 = getPlotY(hist[i + 1]);
+                                AddLine(verts, px0, py0, px1, py1, 1.4f * uiScale, line.r, line.g, line.b, 0.85f * line.a);
+                            }
                         }
                     }
                 }
