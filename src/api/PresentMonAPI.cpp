@@ -561,12 +561,48 @@ PRESENTMON_API2_EXPORT PM_STATUS pmConsumeFrames(
                 break;
             case PM_METRIC_PRESENT_RUNTIME:
                 if (elem.dataSize >= sizeof(int32_t)) {
-                    *reinterpret_cast<int32_t*>(dest) = PM_GRAPHICS_RUNTIME_VULKAN;
+                    *reinterpret_cast<int32_t*>(dest) = static_cast<int32_t>(event.graphicsRuntime);
                 }
                 break;
             case PM_METRIC_PRESENT_MODE:
                 if (elem.dataSize >= sizeof(int32_t)) {
-                    *reinterpret_cast<int32_t*>(dest) = PM_PRESENT_MODE_COMPOSED_FLIP;
+                    *reinterpret_cast<int32_t*>(dest) = static_cast<int32_t>(event.presentMode);
+                }
+                break;
+            case PM_METRIC_SYNC_INTERVAL:
+                if (elem.dataSize >= sizeof(int32_t)) {
+                    *reinterpret_cast<int32_t*>(dest) = (event.presentMode == 0) ? 0 : 1;
+                }
+                break;
+            case PM_METRIC_PRESENT_FLAGS:
+                if (elem.dataSize >= sizeof(uint32_t)) {
+                    *reinterpret_cast<uint32_t*>(dest) = event.flags;
+                }
+                break;
+            case PM_METRIC_ALLOWS_TEARING:
+                if (elem.dataSize >= sizeof(bool)) {
+                    *reinterpret_cast<bool*>(dest) = (event.presentMode == 0 || (event.flags & 1) != 0);
+                }
+                break;
+            case PM_METRIC_CPU_BUSY:
+                if (elem.dataSize >= sizeof(double)) {
+                    double busyMs = (event.presentStartTimestampNs > event.cpuStartTimestampNs && event.cpuStartTimestampNs > 0)
+                        ? (static_cast<double>(event.presentStartTimestampNs - event.cpuStartTimestampNs) / 1'000'000.0)
+                        : (static_cast<double>(event.frameTimeNs) / 1'000'000.0);
+                    *reinterpret_cast<double*>(dest) = busyMs;
+                }
+                break;
+            case PM_METRIC_CPU_WAIT:
+                if (elem.dataSize >= sizeof(double)) {
+                    *reinterpret_cast<double*>(dest) = static_cast<double>(event.presentDurationNs) / 1'000'000.0;
+                }
+                break;
+            case PM_METRIC_GPU_LATENCY:
+                if (elem.dataSize >= sizeof(double)) {
+                    double latMs = (event.gpuStartTimestampNs >= event.cpuStartTimestampNs && event.cpuStartTimestampNs > 0)
+                        ? (static_cast<double>(event.gpuStartTimestampNs - event.cpuStartTimestampNs) / 1'000'000.0)
+                        : 0.0;
+                    *reinterpret_cast<double*>(dest) = latMs;
                 }
                 break;
             case PM_METRIC_FRAME_TYPE:
@@ -690,6 +726,29 @@ PRESENTMON_API2_EXPORT PM_STATUS pmConsumeFrames(
                         ? (static_cast<double>(event.presentStartTimestampNs - lastClick) / 1'000'000.0)
                         : 0.0;
                     *reinterpret_cast<double*>(dest) = latencyMs;
+                }
+                break;
+            case PM_METRIC_ALL_INPUT_TO_PHOTON_LATENCY:
+                if (elem.dataSize >= sizeof(double)) {
+                    double latMs = (event.displayTimestampNs >= event.cpuStartTimestampNs && event.cpuStartTimestampNs > 0)
+                        ? (static_cast<double>(event.displayTimestampNs - event.cpuStartTimestampNs) / 1'000'000.0)
+                        : 0.0;
+                    *reinterpret_cast<double*>(dest) = latMs;
+                }
+                break;
+            case PM_METRIC_ANIMATION_TIME:
+                if (elem.dataSize >= sizeof(double)) {
+                    *reinterpret_cast<double*>(dest) = static_cast<double>(event.frameTimeNs) / 1'000'000.0;
+                }
+                break;
+            case PM_METRIC_ANIMATION_ERROR:
+                if (elem.dataSize >= sizeof(double)) {
+                    *reinterpret_cast<double*>(dest) = 0.0;
+                }
+                break;
+            case PM_METRIC_INSTRUMENTED_LATENCY:
+                if (elem.dataSize >= sizeof(double)) {
+                    *reinterpret_cast<double*>(dest) = static_cast<double>(event.presentDurationNs) / 1'000'000.0;
                 }
                 break;
             case PM_METRIC_DROPPED_FRAMES:
@@ -855,7 +914,7 @@ PRESENTMON_API2_EXPORT PM_STATUS pmGetFullTelemetrySnapshot(
     }
 
     pSnapshot->swapChain = hasFrame ? frame.swapChain : 0;
-    pSnapshot->graphicsRuntime = PM_GRAPHICS_RUNTIME_VULKAN;
+    pSnapshot->graphicsRuntime = hasFrame ? static_cast<int32_t>(frame.graphicsRuntime) : PM_GRAPHICS_RUNTIME_VULKAN;
     pSnapshot->presentMode = hasFrame ? static_cast<int32_t>(frame.presentMode) : PM_PRESENT_MODE_COMPOSED_FLIP;
     pSnapshot->allowsTearing = 0;
     pSnapshot->syncInterval = 1;

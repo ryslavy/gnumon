@@ -68,6 +68,15 @@ typedef ptrdiff_t GLintptr;
 #define GL_VERTEX_ARRAY_BINDING           0x85B5
 #define GL_ACTIVE_TEXTURE                 0x84E0
 #define GL_TEXTURE0                       0x84C0
+#define GL_COLOR_WRITEMASK                0x0C13
+#define GL_DEPTH_WRITEMASK                0x0982
+#define GL_POLYGON_MODE                   0x0B40
+#define GL_FRONT_AND_BACK                 0x0408
+#define GL_FILL                           0x1B02
+#define GL_BLEND_EQUATION_RGB             0x8009
+#define GL_BLEND_EQUATION_ALPHA           0x883D
+#define GL_ALL_ATTRIB_BITS                0x000FFFFF
+#define GL_CLIENT_ALL_ATTRIB_BITS         0xFFFFFFFF
 
 class GlOverlayRenderer : public HudVertexGenerator {
 public:
@@ -208,17 +217,41 @@ public:
 
         if (verts.empty()) return;
 
-        // Save OpenGL state
+        // Save full OpenGL state
         GLint lastProgram = 0, lastTexture = 0, lastVbo = 0, lastVao = 0;
-        GLint lastViewport[4]{0,0,0,0};
+        GLint lastActiveTexture = GL_TEXTURE0;
+        GLint lastViewport[4]{0, 0, 0, 0};
+        GLint lastScissorBox[4]{0, 0, 0, 0};
+        GLint lastPolygonMode[2]{GL_FILL, GL_FILL};
+        GLint lastBlendSrcRgb = GL_SRC_ALPHA, lastBlendDstRgb = GL_ONE_MINUS_SRC_ALPHA;
+        GLint lastBlendSrcAlpha = GL_ONE, lastBlendDstAlpha = GL_ONE_MINUS_SRC_ALPHA;
+        GLint lastBlendEqRgb = 0x8006 /* GL_FUNC_ADD */, lastBlendEqAlpha = 0x8006;
         GLboolean lastBlend = GL_FALSE, lastCull = GL_FALSE, lastDepth = GL_FALSE, lastScissor = GL_FALSE;
+        GLboolean lastColorMask[4]{GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+        GLboolean lastDepthMask = GL_TRUE;
 
-        p_glGetIntegerv(GL_VIEWPORT, lastViewport);
+        if (p_glPushAttrib) p_glPushAttrib(GL_ALL_ATTRIB_BITS);
+        if (p_glPushClientAttrib) p_glPushClientAttrib(GL_CLIENT_ALL_ATTRIB_BITS);
+
         if (p_glGetIntegerv) {
+            p_glGetIntegerv(GL_VIEWPORT, lastViewport);
+            p_glGetIntegerv(GL_SCISSOR_BOX, lastScissorBox);
             p_glGetIntegerv(GL_CURRENT_PROGRAM, &lastProgram);
+            p_glGetIntegerv(GL_ACTIVE_TEXTURE, &lastActiveTexture);
             p_glGetIntegerv(GL_TEXTURE_BINDING_2D, &lastTexture);
             p_glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &lastVbo);
+            p_glGetIntegerv(GL_BLEND_SRC_RGB, &lastBlendSrcRgb);
+            p_glGetIntegerv(GL_BLEND_DST_RGB, &lastBlendDstRgb);
+            p_glGetIntegerv(GL_BLEND_SRC_ALPHA, &lastBlendSrcAlpha);
+            p_glGetIntegerv(GL_BLEND_DST_ALPHA, &lastBlendDstAlpha);
+            p_glGetIntegerv(GL_BLEND_EQUATION_RGB, &lastBlendEqRgb);
+            p_glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &lastBlendEqAlpha);
+            p_glGetIntegerv(GL_POLYGON_MODE, lastPolygonMode);
             if (p_glGenVertexArrays) p_glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &lastVao);
+        }
+        if (p_glGetBooleanv) {
+            p_glGetBooleanv(GL_COLOR_WRITEMASK, lastColorMask);
+            p_glGetBooleanv(GL_DEPTH_WRITEMASK, &lastDepthMask);
         }
         if (p_glIsEnabled) {
             lastBlend = p_glIsEnabled(GL_BLEND);
@@ -227,9 +260,17 @@ public:
             lastScissor = p_glIsEnabled(GL_SCISSOR_TEST);
         }
 
-        // Set Render state
+        // Set Render state for HUD
+        if (p_glActiveTexture) p_glActiveTexture(GL_TEXTURE0);
         if (p_glEnable) p_glEnable(GL_BLEND);
-        if (p_glBlendFunc) p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        if (p_glBlendFuncSeparate) {
+            p_glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        } else if (p_glBlendFunc) {
+            p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        }
+        if (p_glColorMask) p_glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        if (p_glDepthMask) p_glDepthMask(GL_FALSE);
+        if (p_glPolygonMode) p_glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         if (p_glDisable) {
             p_glDisable(GL_CULL_FACE);
             p_glDisable(GL_DEPTH_TEST);
@@ -276,10 +317,24 @@ public:
 
         // Restore State
         if (p_glBindTexture) p_glBindTexture(GL_TEXTURE_2D, lastTexture);
+        if (p_glActiveTexture) p_glActiveTexture(lastActiveTexture);
         if (p_glBindBuffer) p_glBindBuffer(GL_ARRAY_BUFFER, lastVbo);
         if (vao_ && p_glBindVertexArray) p_glBindVertexArray(lastVao);
         if (p_glUseProgram) p_glUseProgram(lastProgram);
         if (p_glViewport) p_glViewport(lastViewport[0], lastViewport[1], lastViewport[2], lastViewport[3]);
+        if (p_glScissor) p_glScissor(lastScissorBox[0], lastScissorBox[1], lastScissorBox[2], lastScissorBox[3]);
+        if (p_glPolygonMode) p_glPolygonMode(GL_FRONT_AND_BACK, lastPolygonMode[0]);
+        if (p_glColorMask) p_glColorMask(lastColorMask[0], lastColorMask[1], lastColorMask[2], lastColorMask[3]);
+        if (p_glDepthMask) p_glDepthMask(lastDepthMask);
+
+        if (p_glBlendFuncSeparate) {
+            p_glBlendFuncSeparate(lastBlendSrcRgb, lastBlendDstRgb, lastBlendSrcAlpha, lastBlendDstAlpha);
+        } else if (p_glBlendFunc) {
+            p_glBlendFunc(lastBlendSrcRgb, lastBlendDstRgb);
+        }
+        if (p_glBlendEquationSeparate) {
+            p_glBlendEquationSeparate(lastBlendEqRgb, lastBlendEqAlpha);
+        }
 
         if (p_glEnable && p_glDisable) {
             if (lastBlend) p_glEnable(GL_BLEND); else p_glDisable(GL_BLEND);
@@ -287,18 +342,32 @@ public:
             if (lastDepth) p_glEnable(GL_DEPTH_TEST); else p_glDisable(GL_DEPTH_TEST);
             if (lastScissor) p_glEnable(GL_SCISSOR_TEST); else p_glDisable(GL_SCISSOR_TEST);
         }
+
+        if (p_glPopClientAttrib) p_glPopClientAttrib();
+        if (p_glPopAttrib) p_glPopAttrib();
     }
 
 private:
     void LoadProcs() {
-        if (p_glGetIntegerv) return; // already loaded
         p_glGetIntegerv = reinterpret_cast<PFN_glGetIntegerv>(dlsym(RTLD_DEFAULT, "glGetIntegerv"));
+        p_glGetBooleanv = reinterpret_cast<PFN_glGetBooleanv>(dlsym(RTLD_DEFAULT, "glGetBooleanv"));
         p_glViewport = reinterpret_cast<PFN_glViewport>(dlsym(RTLD_DEFAULT, "glViewport"));
+        p_glScissor = reinterpret_cast<PFN_glScissor>(dlsym(RTLD_DEFAULT, "glScissor"));
         p_glEnable = reinterpret_cast<PFN_glEnable>(dlsym(RTLD_DEFAULT, "glEnable"));
         p_glDisable = reinterpret_cast<PFN_glDisable>(dlsym(RTLD_DEFAULT, "glDisable"));
         p_glIsEnabled = reinterpret_cast<PFN_glIsEnabled>(dlsym(RTLD_DEFAULT, "glIsEnabled"));
         p_glBlendFunc = reinterpret_cast<PFN_glBlendFunc>(dlsym(RTLD_DEFAULT, "glBlendFunc"));
+        p_glBlendFuncSeparate = reinterpret_cast<PFN_glBlendFuncSeparate>(dlsym(RTLD_DEFAULT, "glBlendFuncSeparate"));
+        p_glBlendEquationSeparate = reinterpret_cast<PFN_glBlendEquationSeparate>(dlsym(RTLD_DEFAULT, "glBlendEquationSeparate"));
         p_glBindTexture = reinterpret_cast<PFN_glBindTexture>(dlsym(RTLD_DEFAULT, "glBindTexture"));
+        p_glActiveTexture = reinterpret_cast<PFN_glActiveTexture>(dlsym(RTLD_DEFAULT, "glActiveTexture"));
+        p_glColorMask = reinterpret_cast<PFN_glColorMask>(dlsym(RTLD_DEFAULT, "glColorMask"));
+        p_glDepthMask = reinterpret_cast<PFN_glDepthMask>(dlsym(RTLD_DEFAULT, "glDepthMask"));
+        p_glPolygonMode = reinterpret_cast<PFN_glPolygonMode>(dlsym(RTLD_DEFAULT, "glPolygonMode"));
+        p_glPushAttrib = reinterpret_cast<PFN_glPushAttrib>(dlsym(RTLD_DEFAULT, "glPushAttrib"));
+        p_glPopAttrib = reinterpret_cast<PFN_glPopAttrib>(dlsym(RTLD_DEFAULT, "glPopAttrib"));
+        p_glPushClientAttrib = reinterpret_cast<PFN_glPushClientAttrib>(dlsym(RTLD_DEFAULT, "glPushClientAttrib"));
+        p_glPopClientAttrib = reinterpret_cast<PFN_glPopClientAttrib>(dlsym(RTLD_DEFAULT, "glPopClientAttrib"));
         p_glGenTextures = reinterpret_cast<PFN_glGenTextures>(dlsym(RTLD_DEFAULT, "glGenTextures"));
         p_glDeleteTextures = reinterpret_cast<PFN_glDeleteTextures>(dlsym(RTLD_DEFAULT, "glDeleteTextures"));
         p_glTexParameteri = reinterpret_cast<PFN_glTexParameteri>(dlsym(RTLD_DEFAULT, "glTexParameteri"));
@@ -332,12 +401,24 @@ private:
     }
 
     typedef void (*PFN_glGetIntegerv)(GLenum pname, GLint *data);
+    typedef void (*PFN_glGetBooleanv)(GLenum pname, GLboolean *data);
     typedef void (*PFN_glViewport)(GLint x, GLint y, GLsizei width, GLsizei height);
+    typedef void (*PFN_glScissor)(GLint x, GLint y, GLsizei width, GLsizei height);
     typedef void (*PFN_glEnable)(GLenum cap);
     typedef void (*PFN_glDisable)(GLenum cap);
     typedef GLboolean (*PFN_glIsEnabled)(GLenum cap);
     typedef void (*PFN_glBlendFunc)(GLenum sfactor, GLenum dfactor);
+    typedef void (*PFN_glBlendFuncSeparate)(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha);
+    typedef void (*PFN_glBlendEquationSeparate)(GLenum modeRGB, GLenum modeAlpha);
     typedef void (*PFN_glBindTexture)(GLenum target, GLuint texture);
+    typedef void (*PFN_glActiveTexture)(GLenum texture);
+    typedef void (*PFN_glColorMask)(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha);
+    typedef void (*PFN_glDepthMask)(GLboolean flag);
+    typedef void (*PFN_glPolygonMode)(GLenum face, GLenum mode);
+    typedef void (*PFN_glPushAttrib)(GLbitfield mask);
+    typedef void (*PFN_glPopAttrib)();
+    typedef void (*PFN_glPushClientAttrib)(GLbitfield mask);
+    typedef void (*PFN_glPopClientAttrib)();
     typedef void (*PFN_glGenTextures)(GLsizei n, GLuint *textures);
     typedef void (*PFN_glDeleteTextures)(GLsizei n, const GLuint *textures);
     typedef void (*PFN_glTexParameteri)(GLenum target, GLenum pname, GLint param);
@@ -369,12 +450,24 @@ private:
     typedef void (*PFN_glDeleteVertexArrays)(GLsizei n, const GLuint *arrays);
 
     PFN_glGetIntegerv p_glGetIntegerv = nullptr;
+    PFN_glGetBooleanv p_glGetBooleanv = nullptr;
     PFN_glViewport p_glViewport = nullptr;
+    PFN_glScissor p_glScissor = nullptr;
     PFN_glEnable p_glEnable = nullptr;
     PFN_glDisable p_glDisable = nullptr;
     PFN_glIsEnabled p_glIsEnabled = nullptr;
     PFN_glBlendFunc p_glBlendFunc = nullptr;
+    PFN_glBlendFuncSeparate p_glBlendFuncSeparate = nullptr;
+    PFN_glBlendEquationSeparate p_glBlendEquationSeparate = nullptr;
     PFN_glBindTexture p_glBindTexture = nullptr;
+    PFN_glActiveTexture p_glActiveTexture = nullptr;
+    PFN_glColorMask p_glColorMask = nullptr;
+    PFN_glDepthMask p_glDepthMask = nullptr;
+    PFN_glPolygonMode p_glPolygonMode = nullptr;
+    PFN_glPushAttrib p_glPushAttrib = nullptr;
+    PFN_glPopAttrib p_glPopAttrib = nullptr;
+    PFN_glPushClientAttrib p_glPushClientAttrib = nullptr;
+    PFN_glPopClientAttrib p_glPopClientAttrib = nullptr;
     PFN_glGenTextures p_glGenTextures = nullptr;
     PFN_glDeleteTextures p_glDeleteTextures = nullptr;
     PFN_glTexParameteri p_glTexParameteri = nullptr;

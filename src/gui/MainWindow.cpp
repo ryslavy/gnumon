@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <iostream>
 #include <iomanip>
+#include <QRegularExpression>
 #include "../common/ProcUtils.h"
 
 namespace gnumon::gui {
@@ -21,19 +22,68 @@ namespace gnumon::gui {
 struct FramePayload {
     uint32_t processId = 0;
     uint64_t swapChain = 0;
-    int32_t runtime = 0;
+    int32_t runtime = 3;
+    int32_t syncInterval = 1;
+    uint32_t presentFlags = 0;
+    bool allowsTearing = false;
     int32_t presentMode = 0;
-    double cpuStartTime = 0.0;
+    int32_t frameType = 2;
+    uint64_t cpuStartQpc = 0;
     double frameTimeMs = 0.0;
-    double displayedFps = 0.0;
-    double inPresentApiMs = 0.0;
+    double cpuBusyMs = 0.0;
+    double cpuWaitMs = 0.0;
+    double gpuLatencyMs = 0.0;
     double gpuTimeMs = 0.0;
+    double gpuBusyMs = 0.0;
+    double gpuWaitMs = 0.0;
+    double videoBusyMs = 0.0;
+    double displayLatencyMs = 0.0;
+    double displayedTimeMs = 0.0;
+    double animationError = 0.0;
+    double animationTime = 0.0;
+    double msFlipDelay = 0.0;
+    double allInputToPhotonLatency = 0.0;
+    double clickToPhotonLatencyMs = 0.0;
+    double instrumentedLatencyMs = 0.0;
     double gpuPower = 0.0;
     double gpuTemp = 0.0;
     double gpuUtil = 0.0;
-    double cpuUtil = 0.0;
+    double gpuFreq = 0.0;
     double cpuPower = 0.0;
+    double cpuTemp = 0.0;
+    double cpuUtil = 0.0;
 };
+
+static const char* FormatRuntime(int32_t runtime) {
+    switch (runtime) {
+    case 1: return "DXGI";
+    case 2: return "D3D9";
+    case 3: return "Vulkan";
+    case 4: return "OpenGL";
+    default: return "Vulkan";
+    }
+}
+
+static const char* FormatPresentMode(int32_t mode) {
+    switch (mode) {
+    case 0: return "Hardware: Legacy Flip";
+    case 1: return "Hardware: Legacy Copy to front buffer";
+    case 2: return "Hardware: Independent Flip";
+    case 3: return "Composed: Flip";
+    case 4: return "Hardware Composed: Independent Flip";
+    case 5: return "Composed: Copy with GPU GDI";
+    case 6: return "Composed: Copy with CPU GDI";
+    default: return "Hardware: Legacy Flip";
+    }
+}
+
+static const char* FormatFrameType(int32_t type) {
+    switch (type) {
+    case 100: return "AMD_AFMF";
+    case 50: return "Intel XeSS-FG";
+    default: return "Application";
+    }
+}
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -228,11 +278,6 @@ void MainWindow::UpdateStatusBar() {
 }
 
 void MainWindow::RefreshProcesses() {
-    if (config_.autoTarget) {
-        AutoTargetProcess();
-        return;
-    }
-
     auto running = common::ProcUtils::GetRunningProcesses();
     QStringList names;
     QVector<uint32_t> pids;
@@ -272,6 +317,9 @@ void MainWindow::RefreshProcesses() {
     }
 
     mainView_->SetProcessList(names, pids);
+    if (config_.autoTarget) {
+        AutoTargetProcess();
+    }
 }
 
 void MainWindow::AutoTargetProcess() {
@@ -338,7 +386,10 @@ void MainWindow::OnToggleRecording() {
             pmSetRecordingState(session_, true);
         }
 
-        QString filename = QString("gnumon_capture_%1.csv").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+        QString appName = trackedProcessName_.isEmpty() ? "Application" : trackedProcessName_;
+        appName.remove(QRegularExpression("[^a-zA-Z0-9_.-]"));
+        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
+        QString filename = QString("PresentMon-%1_%2.csv").arg(appName, timestamp);
         currentCapturePath_ = GetCapturesDirectory() + "/" + filename;
         csvFile_.open(currentCapturePath_.toStdString());
         if (!csvFile_.is_open()) {
@@ -350,26 +401,45 @@ void MainWindow::OnToggleRecording() {
             return;
         }
 
-        // Write CSV Header
-        csvFile_ << "ProcessID,SwapChainAddress,Runtime,CPUStartTime,CPUPresentTimeMs,DisplayedFPS,"
-                 << "InPresentAPIMs,GPUTimeMs,GPUPowerW,GPUTemperatureC,GPUUtilizationPercent,"
-                 << "CPUUtilizationPercent,CPUPowerW\n";
+        // Write official Intel PresentMon CSV Header
+        csvFile_ << "Application,ProcessID,SwapChainAddress,PresentRuntime,SyncInterval,PresentFlags,AllowsTearing,PresentMode,"
+                 << "FrameType,CPUStartQPC,FrameTime,CPUBusy,CPUWait,GPULatency,GPUTime,GPUBusy,GPUWait,VideoBusy,"
+                 << "DisplayLatency,DisplayedTime,AnimationError,AnimationTime,MsFlipDelay,AllInputToPhotonLatency,"
+                 << "ClickToPhotonLatency,InstrumentedLatency,GPUPowerW,GPUTemperatureC,GPUUtilizationPercent,GPUFrequencyMHz,"
+                 << "CPUPowerW,CPUTemperatureC,CPUUtilizationPercent\n";
         csvFile_.flush();
 
         std::vector<PM_QUERY_ELEMENT> frameElements = {
             { PM_METRIC_PROCESS_ID, PM_STAT_NONE, 0, 0, offsetof(FramePayload, processId), sizeof(uint32_t) },
             { PM_METRIC_SWAP_CHAIN_ADDRESS, PM_STAT_NONE, 0, 0, offsetof(FramePayload, swapChain), sizeof(uint64_t) },
             { PM_METRIC_PRESENT_RUNTIME, PM_STAT_NONE, 0, 0, offsetof(FramePayload, runtime), sizeof(int32_t) },
-            { PM_METRIC_CPU_START_TIME, PM_STAT_NONE, 0, 0, offsetof(FramePayload, cpuStartTime), sizeof(double) },
+            { PM_METRIC_SYNC_INTERVAL, PM_STAT_NONE, 0, 0, offsetof(FramePayload, syncInterval), sizeof(int32_t) },
+            { PM_METRIC_PRESENT_FLAGS, PM_STAT_NONE, 0, 0, offsetof(FramePayload, presentFlags), sizeof(uint32_t) },
+            { PM_METRIC_ALLOWS_TEARING, PM_STAT_NONE, 0, 0, offsetof(FramePayload, allowsTearing), sizeof(bool) },
+            { PM_METRIC_PRESENT_MODE, PM_STAT_NONE, 0, 0, offsetof(FramePayload, presentMode), sizeof(int32_t) },
+            { PM_METRIC_FRAME_TYPE, PM_STAT_NONE, 0, 0, offsetof(FramePayload, frameType), sizeof(int32_t) },
+            { PM_METRIC_CPU_START_QPC, PM_STAT_NONE, 0, 0, offsetof(FramePayload, cpuStartQpc), sizeof(uint64_t) },
             { PM_METRIC_CPU_FRAME_TIME, PM_STAT_NONE, 0, 0, offsetof(FramePayload, frameTimeMs), sizeof(double) },
-            { PM_METRIC_DISPLAYED_FPS, PM_STAT_NONE, 0, 0, offsetof(FramePayload, displayedFps), sizeof(double) },
-            { PM_METRIC_IN_PRESENT_API, PM_STAT_NONE, 0, 0, offsetof(FramePayload, inPresentApiMs), sizeof(double) },
+            { PM_METRIC_CPU_BUSY, PM_STAT_NONE, 0, 0, offsetof(FramePayload, cpuBusyMs), sizeof(double) },
+            { PM_METRIC_CPU_WAIT, PM_STAT_NONE, 0, 0, offsetof(FramePayload, cpuWaitMs), sizeof(double) },
+            { PM_METRIC_GPU_LATENCY, PM_STAT_NONE, 0, 0, offsetof(FramePayload, gpuLatencyMs), sizeof(double) },
             { PM_METRIC_GPU_TIME, PM_STAT_NONE, 0, 0, offsetof(FramePayload, gpuTimeMs), sizeof(double) },
+            { PM_METRIC_GPU_BUSY, PM_STAT_NONE, 0, 0, offsetof(FramePayload, gpuBusyMs), sizeof(double) },
+            { PM_METRIC_GPU_WAIT, PM_STAT_NONE, 0, 0, offsetof(FramePayload, gpuWaitMs), sizeof(double) },
+            { PM_METRIC_DISPLAY_LATENCY, PM_STAT_NONE, 0, 0, offsetof(FramePayload, displayLatencyMs), sizeof(double) },
+            { PM_METRIC_UNTIL_DISPLAYED, PM_STAT_NONE, 0, 0, offsetof(FramePayload, displayedTimeMs), sizeof(double) },
+            { PM_METRIC_ANIMATION_ERROR, PM_STAT_NONE, 0, 0, offsetof(FramePayload, animationError), sizeof(double) },
+            { PM_METRIC_ANIMATION_TIME, PM_STAT_NONE, 0, 0, offsetof(FramePayload, animationTime), sizeof(double) },
+            { PM_METRIC_ALL_INPUT_TO_PHOTON_LATENCY, PM_STAT_NONE, 0, 0, offsetof(FramePayload, allInputToPhotonLatency), sizeof(double) },
+            { PM_METRIC_CLICK_TO_PHOTON_LATENCY, PM_STAT_NONE, 0, 0, offsetof(FramePayload, clickToPhotonLatencyMs), sizeof(double) },
+            { PM_METRIC_INSTRUMENTED_LATENCY, PM_STAT_NONE, 0, 0, offsetof(FramePayload, instrumentedLatencyMs), sizeof(double) },
             { PM_METRIC_GPU_POWER, PM_STAT_NONE, 0, 0, offsetof(FramePayload, gpuPower), sizeof(double) },
             { PM_METRIC_GPU_TEMPERATURE, PM_STAT_NONE, 0, 0, offsetof(FramePayload, gpuTemp), sizeof(double) },
             { PM_METRIC_GPU_UTILIZATION, PM_STAT_NONE, 0, 0, offsetof(FramePayload, gpuUtil), sizeof(double) },
-            { PM_METRIC_CPU_UTILIZATION, PM_STAT_NONE, 0, 0, offsetof(FramePayload, cpuUtil), sizeof(double) },
+            { PM_METRIC_GPU_FREQUENCY, PM_STAT_NONE, 0, 0, offsetof(FramePayload, gpuFreq), sizeof(double) },
             { PM_METRIC_CPU_POWER, PM_STAT_NONE, 0, 0, offsetof(FramePayload, cpuPower), sizeof(double) },
+            { PM_METRIC_CPU_TEMPERATURE, PM_STAT_NONE, 0, 0, offsetof(FramePayload, cpuTemp), sizeof(double) },
+            { PM_METRIC_CPU_UTILIZATION, PM_STAT_NONE, 0, 0, offsetof(FramePayload, cpuUtil), sizeof(double) },
         };
 
         if (frameQuery_) {
@@ -399,7 +469,20 @@ void MainWindow::OnToggleRecording() {
 
 void MainWindow::OnPollTimer() {
     // Process frame recording if active
-    if (isRecording_ && frameQuery_ && csvFile_.is_open()) {
+    if (isRecording_ && csvFile_.is_open()) {
+        // If tracked PID is invalid or ring disconnected, dynamically re-acquire active ring
+        bool trackedHasRing = (trackedPid_ > 0 && std::filesystem::exists("/dev/shm/gnumon_ring_" + std::to_string(trackedPid_)));
+        if (!trackedHasRing) {
+            auto activePids = common::GetActiveRingPids();
+            if (!activePids.empty()) {
+                trackedPid_ = activePids.front();
+                trackedProcessName_ = QString::fromStdString(common::ProcUtils::GetProcessName(trackedPid_));
+                if (session_) {
+                    pmStartTrackingProcess(session_, trackedPid_);
+                }
+            }
+        }
+
         // Check capture duration auto-stop
         if (config_.enableCaptureDuration && config_.captureDurationSeconds > 0) {
             uint64_t elapsedSec = (QDateTime::currentMSecsSinceEpoch() - recordingStartMs_) / 1000;
@@ -409,33 +492,57 @@ void MainWindow::OnPollTimer() {
             }
         }
 
-        constexpr uint32_t BATCH_SIZE = 128;
-        std::vector<uint8_t> buffer(BATCH_SIZE * frameBlobSize_);
-        uint32_t numFrames = BATCH_SIZE;
+        if (frameQuery_) {
+            constexpr uint32_t BATCH_SIZE = 128;
+            std::vector<uint8_t> buffer(BATCH_SIZE * frameBlobSize_);
+            uint32_t numFrames = BATCH_SIZE;
 
-        while (pmConsumeFrames(frameQuery_, trackedPid_, buffer.data(), &numFrames) == PM_STATUS_SUCCESS && numFrames > 0) {
-            for (uint32_t i = 0; i < numFrames; ++i) {
-                auto* frame = reinterpret_cast<FramePayload*>(buffer.data() + (i * frameBlobSize_));
-                csvFile_ << frame->processId << ","
-                         << "0x" << std::hex << frame->swapChain << std::dec << ","
-                         << "Vulkan,"
-                         << std::fixed << std::setprecision(3)
-                         << frame->cpuStartTime << ","
-                         << frame->frameTimeMs << ","
-                         << frame->displayedFps << ","
-                         << frame->inPresentApiMs << ","
-                         << frame->gpuTimeMs << ","
-                         << frame->gpuPower << ","
-                         << frame->gpuTemp << ","
-                         << frame->gpuUtil << ","
-                         << frame->cpuUtil << ","
-                         << frame->cpuPower << "\n";
-                recordedFramesCount_++;
+            while (pmConsumeFrames(frameQuery_, trackedPid_, buffer.data(), &numFrames) == PM_STATUS_SUCCESS && numFrames > 0) {
+                for (uint32_t i = 0; i < numFrames; ++i) {
+                    auto* frame = reinterpret_cast<FramePayload*>(buffer.data() + (i * frameBlobSize_));
+                    std::string appName = trackedProcessName_.isEmpty() ? "Unknown" : trackedProcessName_.toStdString();
+                    csvFile_ << appName << ","
+                             << frame->processId << ","
+                             << "0x" << std::hex << frame->swapChain << std::dec << ","
+                             << FormatRuntime(frame->runtime) << ","
+                             << frame->syncInterval << ","
+                             << frame->presentFlags << ","
+                             << (frame->allowsTearing ? 1 : 0) << ","
+                             << "\"" << FormatPresentMode(frame->presentMode) << "\","
+                             << FormatFrameType(frame->frameType) << ","
+                             << frame->cpuStartQpc << ","
+                             << std::fixed << std::setprecision(4)
+                             << frame->frameTimeMs << ","
+                             << frame->cpuBusyMs << ","
+                             << frame->cpuWaitMs << ","
+                             << frame->gpuLatencyMs << ","
+                             << frame->gpuTimeMs << ","
+                             << frame->gpuBusyMs << ","
+                             << frame->gpuWaitMs << ","
+                             << frame->videoBusyMs << ","
+                             << frame->displayLatencyMs << ","
+                             << frame->displayedTimeMs << ","
+                             << frame->animationError << ","
+                             << frame->animationTime << ","
+                             << frame->msFlipDelay << ","
+                             << frame->allInputToPhotonLatency << ","
+                             << frame->clickToPhotonLatencyMs << ","
+                             << frame->instrumentedLatencyMs << ","
+                             << std::setprecision(2)
+                             << frame->gpuPower << ","
+                             << frame->gpuTemp << ","
+                             << frame->gpuUtil << ","
+                             << frame->gpuFreq << ","
+                             << frame->cpuPower << ","
+                             << frame->cpuTemp << ","
+                             << frame->cpuUtil << "\n";
+                    recordedFramesCount_++;
+                }
+                if (numFrames < BATCH_SIZE) break;
+                numFrames = BATCH_SIZE;
             }
-            if (numFrames < BATCH_SIZE) break;
-            numFrames = BATCH_SIZE;
+            csvFile_.flush();
         }
-        csvFile_.flush();
     }
 
     // 1. Sync In-Game and Engine recording/overlay state bi-directionally

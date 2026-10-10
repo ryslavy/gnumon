@@ -95,9 +95,19 @@ void ToggleSwitch::paintEvent(QPaintEvent *) {
     }
 }
 
+void ToggleSwitch::mousePressEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton) {
+        event->accept();
+    } else {
+        QWidget::mousePressEvent(event);
+    }
+}
+
 void ToggleSwitch::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
-        setChecked(!checked_);
+        if (rect().contains(event->pos())) {
+            setChecked(!checked_);
+        }
         event->accept();
     } else {
         QWidget::mouseReleaseEvent(event);

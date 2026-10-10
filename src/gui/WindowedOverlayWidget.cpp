@@ -32,6 +32,9 @@ void WindowedOverlayWidget::ReloadLayout() {
     totalH += 12;
 
     resize(w, totalH);
+    if (pos().x() <= 0 && pos().y() <= 0) {
+        move(60, 60);
+    }
     update();
 }
 

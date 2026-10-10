@@ -124,6 +124,7 @@ void EnsureInit() {
 static gnumon::layer::InGameHotkeyManager g_glHotkeyManager;
 
 static void CheckInGameHotkeys(uint64_t nowNs) {
+    g_glOverlay.CheckReloadConfig(nowNs);
     g_glHotkeyManager.UpdateChords(g_glOverlay.GetHotkeyOverlay(),
                                   g_glOverlay.GetHotkeyPresetCycle(),
                                   g_glOverlay.GetHotkeyCapture());
@@ -239,6 +240,7 @@ void RecordGlFrame(uint64_t startNs, uint64_t endNs, uint64_t drawableHandle) {
     event.swapChain = drawableHandle;
     event.presentMode = 0; // Composed
     event.flags = 0;
+    event.graphicsRuntime = 4; // PM_GRAPHICS_RUNTIME_OPENGL
     event.gpuStartTimestampNs = startNs;
     event.gpuDurationNs = endNs - startNs;
     event.gpuBusyNs = endNs - startNs;
@@ -248,9 +250,32 @@ void RecordGlFrame(uint64_t startNs, uint64_t endNs, uint64_t drawableHandle) {
     g_glProducer.Push(event);
 }
 
+static bool IsVulkanLayerActiveInProcess() {
+    static int cached = -1;
+    if (cached != -1) return cached == 1;
+    if (getenv("__GNUMON_VK_ACTIVE") != nullptr) {
+        cached = 1;
+        return true;
+    }
+    void* sym = dlsym(RTLD_DEFAULT, "gnumon_is_vulkan_layer_active");
+    if (sym != nullptr) {
+        cached = 1;
+        return true;
+    }
+    cached = 0;
+    return false;
+}
+
 } // namespace
 
 extern "C" {
+
+// Forward declarations
+void glXSwapBuffers(void* dpy, unsigned long drawable);
+int64_t glXSwapBuffersMscOML(void* dpy, unsigned long drawable, int64_t target_msc, int64_t divisor, int64_t remainder);
+int eglSwapBuffers(void* dpy, void* surface);
+int eglSwapBuffersWithDamageKHR(void* dpy, void* surface, const int* rects, int n_rects);
+int eglSwapBuffersWithDamageEXT(void* dpy, void* surface, const int* rects, int n_rects);
 
 // GLX SwapBuffers intercept
 typedef void (*PFN_glXSwapBuffers)(void* dpy, unsigned long drawable);
@@ -258,6 +283,11 @@ void glXSwapBuffers(void* dpy, unsigned long drawable) {
     static PFN_glXSwapBuffers real_glXSwapBuffers = []() {
         return reinterpret_cast<PFN_glXSwapBuffers>(dlsym(RTLD_NEXT, "glXSwapBuffers"));
     }();
+
+    if (IsVulkanLayerActiveInProcess()) {
+        if (real_glXSwapBuffers) real_glXSwapBuffers(dpy, drawable);
+        return;
+    }
 
     uint64_t start = gnumon::common::Clock::GetTimestampNs();
     PreSwapHook(start);
@@ -270,12 +300,40 @@ void glXSwapBuffers(void* dpy, unsigned long drawable) {
     RecordGlFrame(start, end, static_cast<uint64_t>(drawable));
 }
 
+// GLX SwapBuffersMscOML intercept
+typedef int64_t (*PFN_glXSwapBuffersMscOML)(void* dpy, unsigned long drawable, int64_t target_msc, int64_t divisor, int64_t remainder);
+int64_t glXSwapBuffersMscOML(void* dpy, unsigned long drawable, int64_t target_msc, int64_t divisor, int64_t remainder) {
+    static PFN_glXSwapBuffersMscOML real_glXSwapBuffersMscOML = []() {
+        return reinterpret_cast<PFN_glXSwapBuffersMscOML>(dlsym(RTLD_NEXT, "glXSwapBuffersMscOML"));
+    }();
+
+    if (IsVulkanLayerActiveInProcess()) {
+        return real_glXSwapBuffersMscOML ? real_glXSwapBuffersMscOML(dpy, drawable, target_msc, divisor, remainder) : 0;
+    }
+
+    uint64_t start = gnumon::common::Clock::GetTimestampNs();
+    PreSwapHook(start);
+
+    int64_t result = 0;
+    if (real_glXSwapBuffersMscOML) {
+        result = real_glXSwapBuffersMscOML(dpy, drawable, target_msc, divisor, remainder);
+    }
+    uint64_t end = gnumon::common::Clock::GetTimestampNs();
+
+    RecordGlFrame(start, end, static_cast<uint64_t>(drawable));
+    return result;
+}
+
 // EGL SwapBuffers intercept
 typedef int (*PFN_eglSwapBuffers)(void* dpy, void* surface);
 int eglSwapBuffers(void* dpy, void* surface) {
     static PFN_eglSwapBuffers real_eglSwapBuffers = []() {
         return reinterpret_cast<PFN_eglSwapBuffers>(dlsym(RTLD_NEXT, "eglSwapBuffers"));
     }();
+
+    if (IsVulkanLayerActiveInProcess()) {
+        return real_eglSwapBuffers ? real_eglSwapBuffers(dpy, surface) : 0;
+    }
 
     uint64_t start = gnumon::common::Clock::GetTimestampNs();
     PreSwapHook(start);
@@ -288,6 +346,100 @@ int eglSwapBuffers(void* dpy, void* surface) {
 
     RecordGlFrame(start, end, reinterpret_cast<uint64_t>(surface));
     return result;
+}
+
+// EGL SwapBuffersWithDamageKHR intercept
+typedef int (*PFN_eglSwapBuffersWithDamage)(void* dpy, void* surface, const int* rects, int n_rects);
+int eglSwapBuffersWithDamageKHR(void* dpy, void* surface, const int* rects, int n_rects) {
+    static PFN_eglSwapBuffersWithDamage real_eglSwapWithDamage = []() {
+        return reinterpret_cast<PFN_eglSwapBuffersWithDamage>(dlsym(RTLD_NEXT, "eglSwapBuffersWithDamageKHR"));
+    }();
+
+    if (IsVulkanLayerActiveInProcess()) {
+        return real_eglSwapWithDamage ? real_eglSwapWithDamage(dpy, surface, rects, n_rects) : 0;
+    }
+
+    uint64_t start = gnumon::common::Clock::GetTimestampNs();
+    PreSwapHook(start);
+
+    int result = 0;
+    if (real_eglSwapWithDamage) {
+        result = real_eglSwapWithDamage(dpy, surface, rects, n_rects);
+    } else {
+        result = eglSwapBuffers(dpy, surface);
+    }
+    uint64_t end = gnumon::common::Clock::GetTimestampNs();
+
+    RecordGlFrame(start, end, reinterpret_cast<uint64_t>(surface));
+    return result;
+}
+
+// EGL SwapBuffersWithDamageEXT intercept
+int eglSwapBuffersWithDamageEXT(void* dpy, void* surface, const int* rects, int n_rects) {
+    static PFN_eglSwapBuffersWithDamage real_eglSwapWithDamage = []() {
+        return reinterpret_cast<PFN_eglSwapBuffersWithDamage>(dlsym(RTLD_NEXT, "eglSwapBuffersWithDamageEXT"));
+    }();
+
+    if (IsVulkanLayerActiveInProcess()) {
+        return real_eglSwapWithDamage ? real_eglSwapWithDamage(dpy, surface, rects, n_rects) : 0;
+    }
+
+    uint64_t start = gnumon::common::Clock::GetTimestampNs();
+    PreSwapHook(start);
+
+    int result = 0;
+    if (real_eglSwapWithDamage) {
+        result = real_eglSwapWithDamage(dpy, surface, rects, n_rects);
+    } else {
+        result = eglSwapBuffers(dpy, surface);
+    }
+    uint64_t end = gnumon::common::Clock::GetTimestampNs();
+
+    RecordGlFrame(start, end, reinterpret_cast<uint64_t>(surface));
+    return result;
+}
+
+// glXGetProcAddress / glXGetProcAddressARB intercepts
+typedef void* (*PFN_glXGetProcAddress)(const unsigned char* procName);
+void* glXGetProcAddress(const unsigned char* procName) {
+    static PFN_glXGetProcAddress real_glXGetProcAddress = []() {
+        return reinterpret_cast<PFN_glXGetProcAddress>(dlsym(RTLD_NEXT, "glXGetProcAddress"));
+    }();
+
+    if (!procName) return nullptr;
+    const char* name = reinterpret_cast<const char*>(procName);
+    if (std::strcmp(name, "glXSwapBuffers") == 0) return reinterpret_cast<void*>(glXSwapBuffers);
+    if (std::strcmp(name, "glXSwapBuffersMscOML") == 0) return reinterpret_cast<void*>(glXSwapBuffersMscOML);
+
+    return real_glXGetProcAddress ? real_glXGetProcAddress(procName) : nullptr;
+}
+
+void* glXGetProcAddressARB(const unsigned char* procName) {
+    static PFN_glXGetProcAddress real_glXGetProcAddressARB = []() {
+        return reinterpret_cast<PFN_glXGetProcAddress>(dlsym(RTLD_NEXT, "glXGetProcAddressARB"));
+    }();
+
+    if (!procName) return nullptr;
+    const char* name = reinterpret_cast<const char*>(procName);
+    if (std::strcmp(name, "glXSwapBuffers") == 0) return reinterpret_cast<void*>(glXSwapBuffers);
+    if (std::strcmp(name, "glXSwapBuffersMscOML") == 0) return reinterpret_cast<void*>(glXSwapBuffersMscOML);
+
+    return real_glXGetProcAddressARB ? real_glXGetProcAddressARB(procName) : nullptr;
+}
+
+// eglGetProcAddress intercept
+typedef void* (*PFN_eglGetProcAddress)(const char* procName);
+void* eglGetProcAddress(const char* procName) {
+    static PFN_eglGetProcAddress real_eglGetProcAddress = []() {
+        return reinterpret_cast<PFN_eglGetProcAddress>(dlsym(RTLD_NEXT, "eglGetProcAddress"));
+    }();
+
+    if (!procName) return nullptr;
+    if (std::strcmp(procName, "eglSwapBuffers") == 0) return reinterpret_cast<void*>(eglSwapBuffers);
+    if (std::strcmp(procName, "eglSwapBuffersWithDamageKHR") == 0) return reinterpret_cast<void*>(eglSwapBuffersWithDamageKHR);
+    if (std::strcmp(procName, "eglSwapBuffersWithDamageEXT") == 0) return reinterpret_cast<void*>(eglSwapBuffersWithDamageEXT);
+
+    return real_eglGetProcAddress ? real_eglGetProcAddress(procName) : nullptr;
 }
 
 } // extern "C"

@@ -221,6 +221,9 @@ void TelemetryCoordinator::SetRecordingState(bool active) {
 
 bool TelemetryCoordinator::IsRecordingActive() const {
     std::lock_guard<std::mutex> lock(dataMutex_);
+    if (const_cast<TelemetryCoordinator*>(this)->frameConsumer_.IsConnected()) {
+        const_cast<TelemetryCoordinator*>(this)->recordingActive_ = const_cast<TelemetryCoordinator*>(this)->frameConsumer_.IsRecordingActive();
+    }
     return recordingActive_;
 }
 
@@ -390,6 +393,9 @@ void TelemetryCoordinator::SetInGameOverlayEnabled(bool enabled) {
 
 bool TelemetryCoordinator::IsInGameOverlayEnabled() const {
     std::lock_guard<std::mutex> lock(dataMutex_);
+    if (const_cast<TelemetryCoordinator*>(this)->frameConsumer_.IsConnected()) {
+        const_cast<TelemetryCoordinator*>(this)->inGameOverlayEnabled_ = const_cast<TelemetryCoordinator*>(this)->frameConsumer_.IsOverlayEnabled();
+    }
     return inGameOverlayEnabled_;
 }
 

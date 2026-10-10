@@ -36,7 +36,7 @@ struct alignas(64) FrameEvent {
 
     // Pipeline State Object (PSO) & Shader Compilation Tracking
     uint32_t psoCompileCount = 0;
-    uint32_t reservedPad = 0;
+    uint32_t graphicsRuntime = 3;    // PM_GRAPHICS_RUNTIME_VULKAN (3), PM_GRAPHICS_RUNTIME_OPENGL (4)
     uint64_t psoCompileDurationNs = 0;
 };
 

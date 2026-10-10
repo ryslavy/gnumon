@@ -63,14 +63,18 @@ case "$ACTION" in
         # 5. Vulkan layers status (64-bit and 32-bit)
         VK64_INSTALLED="no"
         VK32_INSTALLED="no"
-        if [ -f "$HOME/.local/share/vulkan/implicit_layer.d/VkLayer_gnumon.json" ] || \
-           [ -f "$HOME/.local/share/vulkan/implicit_layer.d/VkLayer_gnumon.x86_64.json" ]; then
-            VK64_INSTALLED="yes"
-        fi
-        if [ -f "$HOME/.local/share/vulkan/implicit_layer.d/VkLayer_gnumon.i686.json" ] || \
-           [ -f "$HOME/.local/share/vulkan/implicit_layer.d/VkLayer_gnumon.x86.json" ]; then
-            VK32_INSTALLED="yes"
-        fi
+        for vdir in "$HOME/.local/share/vulkan/implicit_layer.d" \
+                    "/usr/share/vulkan/implicit_layer.d" \
+                    "/etc/vulkan/implicit_layer.d" \
+                    "/usr/local/share/vulkan/implicit_layer.d" \
+                    "$HOME/.var/app/com.valvesoftware.Steam/.local/share/vulkan/implicit_layer.d"; do
+            if [ -f "$vdir/VkLayer_gnumon.json" ] || [ -f "$vdir/VkLayer_gnumon.x86_64.json" ]; then
+                VK64_INSTALLED="yes"
+            fi
+            if [ -f "$vdir/VkLayer_gnumon.i686.json" ] || [ -f "$vdir/VkLayer_gnumon.x86.json" ]; then
+                VK32_INSTALLED="yes"
+            fi
+        done
 
         echo "user_service_active=$USER_ACTIVE"
         echo "user_service_enabled=$USER_ENABLED"

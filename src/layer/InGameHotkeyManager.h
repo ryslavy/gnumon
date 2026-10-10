@@ -162,81 +162,104 @@ private:
     }
 
     void ScanEvdev(uint64_t nowNs) {
-        if (nowNs < lastEvdevScanNs_ + 3'000'000'000ULL && !evdevFds_.empty()) {
-            return;
+        if (!evdevFds_.empty() && nowNs < lastEvdevScanNs_ + 10'000'000'000ULL) {
+            return; // Already initialized keyboard fds
         }
         lastEvdevScanNs_ = nowNs;
 
-        CloseEvdev();
-        DIR* dir = opendir("/dev/input");
-        if (!dir) return;
+        if (evdevFds_.empty()) {
+            DIR* dir = opendir("/dev/input");
+            if (!dir) return;
 
-        struct dirent* ent;
-        while ((ent = readdir(dir)) != nullptr) {
-            if (strncmp(ent->d_name, "event", 5) == 0) {
-                std::string path = std::string("/dev/input/") + ent->d_name;
-                int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-                if (fd >= 0) {
-                    // Check if device supports EV_KEY
-                    unsigned long evBits[(EV_MAX + 7) / 8]{};
-                    if (ioctl(fd, EVIOCGBIT(0, sizeof(evBits)), evBits) >= 0) {
-                        if (evBits[EV_KEY / 8] & (1 << (EV_KEY % 8))) {
-                            evdevFds_.push_back(fd);
-                            continue;
+            struct dirent* ent;
+            while ((ent = readdir(dir)) != nullptr) {
+                if (strncmp(ent->d_name, "event", 5) == 0) {
+                    std::string path = std::string("/dev/input/") + ent->d_name;
+                    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+                    if (fd >= 0) {
+                        // Check if device supports EV_KEY and has keyboard keys
+                        unsigned long evBits[(EV_MAX + 7) / 8]{};
+                        if (ioctl(fd, EVIOCGBIT(0, sizeof(evBits)), evBits) >= 0) {
+                            if (evBits[EV_KEY / 8] & (1 << (EV_KEY % 8))) {
+                                unsigned long keyBits[(KEY_MAX + 7) / 8]{};
+                                if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), keyBits) >= 0) {
+                                    // Must support standard keyboard keys (KEY_A, KEY_SPACE, KEY_F1, KEY_ESC)
+                                    bool isKbd = (keyBits[KEY_A / 8] & (1 << (KEY_A % 8))) ||
+                                                 (keyBits[KEY_SPACE / 8] & (1 << (KEY_SPACE % 8))) ||
+                                                 (keyBits[KEY_F1 / 8] & (1 << (KEY_F1 % 8))) ||
+                                                 (keyBits[KEY_ESC / 8] & (1 << (KEY_ESC % 8)));
+                                    if (isKbd) {
+                                        evdevFds_.push_back(fd);
+                                        continue;
+                                    }
+                                }
+                            }
                         }
+                        close(fd);
                     }
-                    close(fd);
                 }
             }
+            closedir(dir);
         }
-        closedir(dir);
     }
 
     void PollEvdev(HotkeyEvents& out, uint64_t nowNs) {
         ScanEvdev(nowNs);
+        if (evdevFds_.empty()) return;
+
+        bool anyOverlayDown = false;
+        bool anyPresetDown = false;
+        bool anyCaptureDown = false;
 
         for (int efd : evdevFds_) {
+            // Drain event buffer
             struct input_event iev[16];
-            ssize_t n = read(efd, iev, sizeof(iev));
-            if (n <= 0) continue;
+            while (read(efd, iev, sizeof(iev)) > 0) {}
 
-            size_t count = n / sizeof(struct input_event);
-            for (size_t i = 0; i < count; ++i) {
-                if (iev[i].type != EV_KEY) continue;
-
-                int code = iev[i].code;
-                int val = iev[i].value; // 0 = release, 1 = press, 2 = repeat
-
-                if (code == KEY_LEFTCTRL || code == KEY_RIGHTCTRL) {
-                    ctrlDown_ = (val != 0);
-                } else if (code == KEY_LEFTSHIFT || code == KEY_RIGHTSHIFT) {
-                    shiftDown_ = (val != 0);
-                } else if (code == KEY_LEFTALT || code == KEY_RIGHTALT) {
-                    altDown_ = (val != 0);
-                }
-
-                if (val == 1) { // Key down edge
-                    // Overlay toggle check (chord OR F9 fallback)
-                    if ((chordOverlay_.evdevKey > 0 && code == chordOverlay_.evdevKey &&
-                         ctrlDown_ == chordOverlay_.ctrl && shiftDown_ == chordOverlay_.shift && altDown_ == chordOverlay_.alt) ||
-                        (code == KEY_F9)) {
-                        out.toggleOverlay = true;
-                    }
-                    // Preset cycle check (chord OR F8/F11 fallback)
-                    else if ((chordPreset_.evdevKey > 0 && code == chordPreset_.evdevKey &&
-                              ctrlDown_ == chordPreset_.ctrl && shiftDown_ == chordPreset_.shift && altDown_ == chordPreset_.alt) ||
-                             (code == KEY_F8 || code == KEY_F11)) {
-                        out.cyclePreset = true;
-                    }
-                    // Capture toggle check (chord OR F10 fallback)
-                    else if ((chordCapture_.evdevKey > 0 && code == chordCapture_.evdevKey &&
-                              ctrlDown_ == chordCapture_.ctrl && shiftDown_ == chordCapture_.shift && altDown_ == chordCapture_.alt) ||
-                             (code == KEY_F10)) {
-                        out.toggleCapture = true;
-                    }
-                }
+            uint8_t keyStates[(KEY_MAX + 7) / 8]{};
+            if (ioctl(efd, EVIOCGKEY(sizeof(keyStates)), keyStates) < 0) {
+                continue;
             }
+
+            auto isDown = [&](int k) -> bool {
+                if (k <= 0 || k > KEY_MAX) return false;
+                return (keyStates[k / 8] & (1 << (k % 8))) != 0;
+            };
+
+            bool cDown = isDown(KEY_LEFTCTRL) || isDown(KEY_RIGHTCTRL);
+            bool sDown = isDown(KEY_LEFTSHIFT) || isDown(KEY_RIGHTSHIFT);
+            bool aDown = isDown(KEY_LEFTALT) || isDown(KEY_RIGHTALT);
+
+            auto testChord = [&](const HotkeyChord& chord, int fb1, int fb2 = 0) -> bool {
+                if (fb1 > 0 && isDown(fb1)) return true;
+                if (fb2 > 0 && isDown(fb2)) return true;
+                if (chord.evdevKey <= 0) return false;
+                if (!isDown(chord.evdevKey)) return false;
+                if (chord.ctrl && !cDown) return false;
+                if (chord.shift && !sDown) return false;
+                if (chord.alt && !aDown) return false;
+                return true;
+            };
+
+            if (testChord(chordOverlay_, KEY_F9)) anyOverlayDown = true;
+            if (testChord(chordPreset_, KEY_F8, KEY_F11)) anyPresetDown = true;
+            if (testChord(chordCapture_, KEY_F10)) anyCaptureDown = true;
         }
+
+        if (anyOverlayDown && !wasEvdevOverlay_) {
+            out.toggleOverlay = true;
+        }
+        wasEvdevOverlay_ = anyOverlayDown;
+
+        if (anyPresetDown && !wasEvdevPreset_) {
+            out.cyclePreset = true;
+        }
+        wasEvdevPreset_ = anyPresetDown;
+
+        if (anyCaptureDown && !wasEvdevCapture_) {
+            out.toggleCapture = true;
+        }
+        wasEvdevCapture_ = anyCaptureDown;
     }
 
     void EnsureX11() {
@@ -354,6 +377,10 @@ private:
     bool wasX11Overlay_ = false;
     bool wasX11Preset_ = false;
     bool wasX11Capture_ = false;
+
+    bool wasEvdevOverlay_ = false;
+    bool wasEvdevPreset_ = false;
+    bool wasEvdevCapture_ = false;
 };
 
 } // namespace gnumon::layer

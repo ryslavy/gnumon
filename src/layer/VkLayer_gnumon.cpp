@@ -24,6 +24,10 @@
 #define VK_LAYER_EXPORT extern "C" __attribute__((visibility("default")))
 #endif
 
+VK_LAYER_EXPORT bool gnumon_is_vulkan_layer_active() {
+    return true;
+}
+
 namespace {
 
 // Dispatch table for instance
@@ -71,6 +75,8 @@ std::unordered_map<void*, DeviceDispatch> g_deviceDispatch;
 
 std::mutex g_queueMutex;
 std::unordered_map<VkQueue, uint32_t> g_queueFamilyMap;
+std::unordered_map<VkQueue, VkDevice> g_queueToDeviceMap;
+std::atomic<bool> g_isZinkDriver{false};
 static PFN_vkGetPhysicalDeviceMemoryProperties g_getPhysicalDeviceMemoryProperties = nullptr;
 
 std::mutex g_swapchainMutex;
@@ -142,7 +148,7 @@ static bool GetConfiguredHudDefault() {
             }
         }
     }
-    return false;
+    return true; // Default enabled for in-game HUD (like OpenGL and GUI)
 }
 
 static int GetConfiguredHudPreset() {
@@ -283,6 +289,14 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateInstance(
         disp.destroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(nextGIPA(*pInstance, "vkDestroyInstance"));
         g_instanceDispatch[GetDispatchKey(*pInstance)] = disp;
 
+        // Export active Vulkan layer presence in process
+        setenv("__GNUMON_VK_ACTIVE", "1", 1);
+        if (pCreateInfo && pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->pEngineName) {
+            if (strcasestr(pCreateInfo->pApplicationInfo->pEngineName, "zink") != nullptr) {
+                g_isZinkDriver = true;
+            }
+        }
+
         if (IsProcessBlacklisted()) {
             return result;
         }
@@ -304,8 +318,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkCreateInstance(
             g_producer.SetOverlayEnabled(true);
         }
         if (getenv("GNUMON_DEBUG") || getenv("GNUMON_OVERLAY")) {
-            fprintf(stderr, "[gnumon-layer] vkCreateInstance initialized! PID=%d overlayDefault=%d\n",
-                    getpid(), static_cast<int>(g_enableOverlay));
+            fprintf(stderr, "[gnumon-layer] vkCreateInstance initialized! PID=%d overlayDefault=%d zink=%d\n",
+                    getpid(), static_cast<int>(g_enableOverlay), static_cast<int>(g_isZinkDriver.load()));
         }
     }
 
@@ -463,6 +477,7 @@ static VKAPI_ATTR void VKAPI_CALL gnumon_vkGetDeviceQueue(
             {
                 std::lock_guard<std::mutex> qlock(g_queueMutex);
                 g_queueFamilyMap[*pQueue] = queueFamilyIndex;
+                g_queueToDeviceMap[*pQueue] = device;
             }
             std::lock_guard<std::mutex> dlock(g_dispatchMutex);
             auto it = g_deviceDispatch.find(GetDispatchKey(device));
@@ -494,6 +509,7 @@ static VKAPI_ATTR void VKAPI_CALL gnumon_vkGetDeviceQueue2(
             {
                 std::lock_guard<std::mutex> qlock(g_queueMutex);
                 g_queueFamilyMap[*pQueue] = pQueueInfo->queueFamilyIndex;
+                g_queueToDeviceMap[*pQueue] = device;
             }
             std::lock_guard<std::mutex> dlock(g_dispatchMutex);
             auto it = g_deviceDispatch.find(GetDispatchKey(device));
@@ -788,6 +804,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueueSubmit2(
 static gnumon::layer::InGameHotkeyManager g_hotkeyManager;
 
 static void CheckInGameHotkeys(uint64_t nowNs) {
+    g_overlayRenderer.CheckReloadConfig(nowNs);
     g_hotkeyManager.UpdateChords(g_overlayRenderer.GetHotkeyOverlay(),
                                 g_overlayRenderer.GetHotkeyPresetCycle(),
                                 g_overlayRenderer.GetHotkeyCapture());
@@ -966,10 +983,26 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
     PFN_vkQueuePresentKHR nextFunc = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_dispatchMutex);
-        for (const auto& [dev, disp] : g_deviceDispatch) {
-            if (disp.queuePresentKHR) {
-                nextFunc = disp.queuePresentKHR;
-                break;
+        VkDevice devForQueue = VK_NULL_HANDLE;
+        {
+            std::lock_guard<std::mutex> qlock(g_queueMutex);
+            auto itQ = g_queueToDeviceMap.find(queue);
+            if (itQ != g_queueToDeviceMap.end()) {
+                devForQueue = itQ->second;
+            }
+        }
+        if (devForQueue != VK_NULL_HANDLE) {
+            auto itD = g_deviceDispatch.find(GetDispatchKey(devForQueue));
+            if (itD != g_deviceDispatch.end()) {
+                nextFunc = itD->second.queuePresentKHR;
+            }
+        }
+        if (!nextFunc) {
+            for (const auto& [dev, disp] : g_deviceDispatch) {
+                if (disp.queuePresentKHR) {
+                    nextFunc = disp.queuePresentKHR;
+                    break;
+                }
             }
         }
     }
@@ -1018,6 +1051,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL gnumon_vkQueuePresentKHR(
         event.swapChain = reinterpret_cast<uint64_t>(pPresentInfo->pSwapchains[0]);
     }
     event.flags = static_cast<uint32_t>(result);
+    event.graphicsRuntime = g_isZinkDriver ? 4 : 3; // PM_GRAPHICS_RUNTIME_OPENGL (4) if Zink, PM_GRAPHICS_RUNTIME_VULKAN (3)
 
     event.gpuStartTimestampNs = gpuStart;
     event.gpuDurationNs = gpuDuration;
